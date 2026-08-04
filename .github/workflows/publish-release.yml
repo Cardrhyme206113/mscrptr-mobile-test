@@ -1,11 +1,16 @@
 name: Publish APK Release
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
     paths:
       - '.github/workflows/publish-release.yml'
+
+concurrency:
+  group: muscriptor-v0.7.0-release
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -71,11 +76,14 @@ jobs:
             --notes "Native fused FP16 KV-cache update. The recommended FP16 mode no longer converts the complete cache to FP32 and back on every layer and token. The decoder's 24 fused GroupQueryAttention operators now read and write FP16 KV directly; only the much smaller packed-QKV input and attention activation are cast. In the equal-length x86 CI benchmark at 768 cache positions, FP32 measured 20.16 ms/token, native FP16 measured 15.50 ms/token, and the old compatibility FP16 path measured 28.05 ms/token. Device results will differ, but this validates that the previous conversion bottleneck is removed. FP16 at a 192 MiB budget still automatically expands to 2048 positions; for a fair 1024-vs-1024 speed test, compare FP32 at 192 MiB with native FP16 at 96 MiB. The old FP16 adapter remains as FP16 compatibility, while BF16, INT8, and INT4 remain experimental memory-only modes because ONNX Runtime GroupQueryAttention does not natively consume those cache formats. Includes overlap inference, sharp orange light/dark UI, live MIDI preview, CPU/NNAPI/parallel modes, and the persistent v0.6+ sideload signature."
 
       - name: Persist release link
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p ci
           echo 'https://github.com/${{ github.repository }}/releases/tag/v0.7.0' > ci/release-url.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add ci/release-url.txt
           git commit -m "docs: record v0.7.0 release URL" || exit 0
-          git push
+          git pull --rebase origin main
+          git push origin HEAD:main
