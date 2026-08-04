@@ -11,13 +11,30 @@ data class MidiNote(
     val isDrum: Boolean,
 )
 
-class TokenDecoder(private val frameRate: Int = 100) {
+sealed interface LiveNoteEvent {
+    data class Started(
+        val id: Long,
+        val program: Int,
+        val pitch: Int,
+        val onsetSeconds: Double,
+        val isDrum: Boolean,
+    ) : LiveNoteEvent
+
+    data class Ended(val id: Long, val note: MidiNote) : LiveNoteEvent
+}
+
+class TokenDecoder(
+    private val frameRate: Int = 100,
+    private val onLiveEvent: (LiveNoteEvent) -> Unit = {},
+) {
     private data class Key(val program: Int, val pitch: Int)
+    private data class Active(val id: Long, val onset: Double)
     private enum class Type { SPECIAL, SHIFT, PITCH, VELOCITY, TIE, PROGRAM, DRUM }
     private data class Event(val type: Type, val value: Int)
 
-    private val open = LinkedHashMap<Key, Double>()
+    private val open = LinkedHashMap<Key, Active>()
     private val notes = ArrayList<MidiNote>()
+    private var nextId = 0L
     private var seekTime = 0.0
     private var nextSeekTime: Double? = null
     private var startTick = 0
@@ -72,9 +89,7 @@ class TokenDecoder(private val frameRate: Int = 100) {
             Type.VELOCITY -> velocity = event.value
             Type.DRUM -> {
                 val time = tickState.toDouble() / frameRate
-                if (nextSeekTime == null || time < nextSeekTime!!) {
-                    notes += MidiNote(128, event.value, time, time + MIN_NOTE_SECONDS, true)
-                }
+                if (nextSeekTime == null || time < nextSeekTime!!) emitDrum(event.value, time)
             }
             Type.PITCH -> {
                 val currentProgram = program ?: return
@@ -83,7 +98,7 @@ class TokenDecoder(private val frameRate: Int = 100) {
                 if (nextSeekTime != null && time >= nextSeekTime!!) return
                 val key = Key(currentProgram, event.value)
                 if (key in open) close(key, time)
-                if (currentVelocity > 0) open[key] = time
+                if (currentVelocity > 0) open(key] = start(key, time)
             }
             else -> Unit
         }
@@ -93,16 +108,10 @@ class TokenDecoder(private val frameRate: Int = 100) {
         if (chunkStarted && inPrologue) {
             closeAll(seekTime)
         } else {
-            val remaining = open.toMap()
-            open.clear()
-            remaining.forEach { (key, onset) ->
-                notes += MidiNote(
-                    key.program,
-                    key.pitch,
-                    onset,
-                    max(onset + MIN_NOTE_SECONDS, audioDurationSeconds.coerceAtMost(onset + 10.0)),
-                    false,
-                )
+            val remaining = open.keys.toList()
+            remaining.forEach { key ->
+                val active = open[key] ?: return@forEach
+                close(key, max(active.onset + MIN_NOTE_SECONDS, audioDurationSeconds.coerceAtMost(active.onset + 10.0)))
             }
         }
         return notes.sortedWith(compareBy<MidiNote> { it.onsetSeconds }.thenBy { it.program }.thenBy { it.pitch })
@@ -112,15 +121,39 @@ class TokenDecoder(private val frameRate: Int = 100) {
         compareBy<Pair<Int, Int>> { it.first }.thenBy { it.second },
     )
 
+    private fun start(key: Key, onset: Double): Active {
+        val active = Active(nextId++, onset)
+        onLiveEvent(
+            LiveNoteEvent.Started(
+                active.id,
+                key.program,
+                key.pitch,
+                onset,
+                false,
+            ),
+        )
+        return active
+    }
+
+    private fun emitDrum(pitch: Int, time: Double) {
+        val id = nextId++
+        onLiveEvent(LiveNoteEvent.Started(id, 128, pitch, time, true))
+        val note = MidiNote(128, pitch, time, time + MIN_NOTE_SECONDS, true)
+        notes += note
+        onLiveEvent(LiveNoteEvent.Ended(id, note))
+    }
+
     private fun close(key: Key, requestedTime: Double) {
-        val onset = open.remove(key) ?: return
-        notes += MidiNote(
+        val active = open.remove(key) ?: return
+        val note = MidiNote(
             key.program,
             key.pitch,
-            onset,
-            max(requestedTime, onset + MIN_NOTE_SECONDS),
+            active.onset,
+            max(requestedTime, active.onset + MIN_NOTE_SECONDS),
             false,
         )
+        notes += note
+        onLiveEvent(LiveNoteEvent.Ended(active.id, note))
     }
 
     private fun closeAll(time: Double) {
