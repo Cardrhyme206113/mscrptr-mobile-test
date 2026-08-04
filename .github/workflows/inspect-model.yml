@@ -1,0 +1,30 @@
+name: Inspect MuScriptor ONNX
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/inspect-model.yml'
+      - 'tools/inspect_model.py'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install inspection tools
+        run: pip install --disable-pip-version-check huggingface_hub onnx
+      - name: Inspect Hugging Face repository
+        run: python tools/inspect_model.py | tee model-inspection.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model-inspection
+          path: model-inspection.txt
+          if-no-files-found: error
