@@ -20,33 +20,57 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
 
-      - name: Build APK
-        run: gradle --no-daemon :app:assembleDebug
+      - name: Generate and validate cache decoder variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet 'onnx>=1.17,<2' 'onnxruntime>=1.20,<2' numpy
+          mkdir -p .cache/muscriptor app/src/main/assets/cache_decoders
+          curl -L --fail --retry 4 --retry-delay 2 \
+            -o .cache/muscriptor/decoder.onnx \
+            'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx?download=true'
+          curl -L --fail --retry 4 --retry-delay 2 \
+            -o .cache/muscriptor/decoder.onnx.data \
+            'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx.data?download=true'
+          python tools/generate_cache_variants.py \
+            --decoder .cache/muscriptor/decoder.onnx \
+            --output app/src/main/assets/cache_decoders
+          python tools/smoke_test_cache_variants.py \
+            --variants app/src/main/assets/cache_decoders \
+            --external-data .cache/muscriptor/decoder.onnx.data \
+            --max-cache 512
+
+      - name: Build signed APK
+        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 
       - name: Prepare release asset
-        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.5.0.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.6.0.apk
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.5.0 --cleanup-tag --yes || true
-          gh release create v0.5.0 \
-            MuScriptor-Mobile-v0.5.0.apk \
+          gh release delete v0.6.0 --cleanup-tag --yes || true
+          gh release create v0.6.0 \
+            MuScriptor-Mobile-v0.6.0.apk \
             --target "$GITHUB_SHA" \
-            --title "MuScriptor Mobile v0.5.0" \
-            --notes "Overlap and boundary-continuity update. The fixed-shape conditioner still sees native 5-second inputs, but windows now advance every 4 seconds, giving 1 second of shared context: 0-5, 4-9, 8-13, and so on. Each window decodes independently to avoid rewinding decoder state; only stable center ownership regions are committed, boundary continuations are recovered, onset-jitter duplicates are suppressed, and adjacent same-note segments are merged for exported MIDI. Live preview now follows the actual finalized center frontier instead of assuming every completed window finalized a full 5 seconds. Adds an experimental 1200 KV-cache profile (~225 MiB) while keeping 1024 recommended. The light/dark interface now uses sharp 2-3 dp corners and an orange accent. All CPU, NNAPI GPU/NPU, FP16, and parallel conditioner/CPU modes remain. Existing model files are reused."
+            --title "MuScriptor Mobile v0.6.0" \
+            --notes "Adaptive KV-cache precision update. Adds seven real persistent cache storage modes: FP32 exact, FP16, BF16, balanced/wide INT8, and packed balanced/wide signed INT4. Choose a 96-512 MiB cache budget and the app automatically calculates the largest cache length that fits it, capped at the model's 2504-position limit. The new default is FP16 at 192 MiB, producing a 2048-position cache instead of FP32's 1024 positions for the same persistent KV budget. Compressed modes use generated ONNX boundary adapters that share the existing downloaded decoder weights; no second 217 MiB model is downloaded. All graph variants are runtime smoke-tested before release. INT8/INT4 are experimental and can trade quality or speed for memory. Includes the v0.5 overlap architecture, sharp orange light/dark theme, live player, CPU/NNAPI/parallel modes, and a stable sideload signature for future releases. Because earlier APKs used random debug signatures, uninstall the old app once before installing v0.6.0; updates after v0.6.0 can install over it."
 
       - name: Persist release link
         run: |
           mkdir -p ci
-          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.5.0' > ci/release-url.txt
+          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.6.0' > ci/release-url.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add ci/release-url.txt
-          git commit -m "docs: record v0.5.0 release URL" || exit 0
+          git commit -m "docs: record v0.6.0 release URL" || exit 0
           git push
