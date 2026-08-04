@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -8,7 +10,7 @@ val persistentSigningStore = layout.buildDirectory.file("signing/muscriptor-dev.
 check(encodedSigningStore.isFile) { "Persistent sideload signing store is missing" }
 persistentSigningStore.parentFile.mkdirs()
 persistentSigningStore.writeBytes(
-    java.util.Base64.getMimeDecoder().decode(encodedSigningStore.readText().trim()),
+    Base64.getMimeDecoder().decode(encodedSigningStore.readText().trim()),
 )
 
 android {
