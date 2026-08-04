@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Print decoder operator and cache topology for cache-kernel experiments."""
 from __future__ import annotations
 
 import argparse
@@ -6,6 +7,10 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import onnx
+
+
+def node_label(node: onnx.NodeProto) -> str:
+    return f"{node.domain or 'ai.onnx'}::{node.op_type}:{node.name}"
 
 
 def main() -> None:
@@ -34,14 +39,13 @@ def main() -> None:
     for value in model.graph.input:
         if not value.name.startswith("past_"):
             continue
-        uses = consumers.get(value.name, [])
-        print(f"  {value.name}: {[f'{n.domain or "ai.onnx"}::{n.op_type}:{n.name}' for n in uses]}")
+        uses = [node_label(node) for node in consumers.get(value.name, [])]
+        print(f"  {value.name}: {uses}")
 
     print("attention-like nodes:")
     for index, node in enumerate(model.graph.node):
-        label = f"{node.domain or 'ai.onnx'}::{node.op_type}"
         if any(word in node.op_type.lower() for word in ("attention", "flash", "rotary")):
-            print(f"  [{index}] {label} name={node.name}")
+            print(f"  [{index}] {node_label(node)}")
             print(f"    inputs={list(node.input)}")
             print(f"    outputs={list(node.output)}")
             print(f"    attrs={[(a.name, onnx.helper.get_attribute_value(a)) for a in node.attribute]}")
@@ -50,7 +54,7 @@ def main() -> None:
     for value in model.graph.output:
         if value.name.startswith("present_"):
             node = producers.get(value.name)
-            print(f"  {value.name}: {None if node is None else f'{node.domain or "ai.onnx"}::{node.op_type}:{node.name}'}")
+            print(f"  {value.name}: {None if node is None else node_label(node)}")
 
 
 if __name__ == "__main__":
