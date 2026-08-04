@@ -1,1 +1,1 @@
-https://github.com/Cardrhyme206113/mscrptr-mobile-test/releases/tag/v0.4.1
+https://github.com/Cardrhyme206113/mscrptr-mobile-test/releases/tag/v0.5.0
