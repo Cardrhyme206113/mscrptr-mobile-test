@@ -28,25 +28,25 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare release asset
-        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.3.0.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.4.0.apk
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.3.0 --cleanup-tag --yes || true
-          gh release create v0.3.0 \
-            MuScriptor-Mobile-v0.3.0.apk \
+          gh release delete v0.4.0 --cleanup-tag --yes || true
+          gh release create v0.4.0 \
+            MuScriptor-Mobile-v0.4.0.apk \
             --target "$GITHUB_SHA" \
-            --title "MuScriptor Mobile v0.3.0" \
-            --notes "Adds selectable hardware backends for Dimensity and other Android devices: reliable CPU, experimental NPU/NNAPI hybrid, and NNAPI hybrid with FP16 relaxation. NNAPI CPU fallback is disabled so unsupported graph nodes return to ONNX Runtime's optimized CPU kernels instead of the slower NNAPI reference CPU. Both conditioner and decoder sessions request NNAPI acceleration. If the device driver or model partition cannot initialize, the app automatically falls back to CPU and displays the reason rather than falsely reporting NPU usage. The active backend is shown during transcription. Existing downloaded model files are reused."
+            --title "MuScriptor Mobile v0.4.0" \
+            --notes "Adds a real heterogeneous parallel mode for Android. While chunk N autoregressively decodes through ONNX Runtime's optimized CPU EP, chunk N+1 mel extraction and conditioner inference are prepared concurrently through NNAPI, allowing Android's GPU or NPU accelerator and CPU to work at the same time without breaking decoder token dependencies. Existing CPU, automatic GPU/NPU NNAPI, and NNAPI+FP16 modes remain. Labels now accurately state that Android chooses the accelerator; the stock ONNX Runtime Android package cannot force the Dimensity GPU separately from its NPU. Uses separate conditioner and decoder sessions/options, automatic CPU fallback, and batches token-progress callbacks to reduce Java/UI overhead. Existing downloaded model files are reused."
 
       - name: Persist release link
         run: |
           mkdir -p ci
-          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.3.0' > ci/release-url.txt
+          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.4.0' > ci/release-url.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add ci/release-url.txt
-          git commit -m "docs: record v0.3.0 release URL" || exit 0
+          git commit -m "docs: record v0.4.0 release URL" || exit 0
           git push
