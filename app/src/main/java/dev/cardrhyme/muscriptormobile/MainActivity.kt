@@ -1,14 +1,15 @@
 package dev.cardrhyme.muscriptormobile
 
+import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.ArrayAdapter
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -18,7 +19,11 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.card.MaterialCardView
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,13 +41,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var songVolumeLabel: TextView
     private lateinit var midiVolumeLabel: TextView
     private lateinit var progress: ProgressBar
-    private lateinit var downloadButton: Button
-    private lateinit var pickButton: Button
-    private lateinit var transcribeButton: Button
-    private lateinit var cancelButton: Button
-    private lateinit var saveButton: Button
-    private lateinit var playPauseButton: Button
-    private lateinit var restartButton: Button
+    private lateinit var downloadButton: MaterialButton
+    private lateinit var pickButton: MaterialButton
+    private lateinit var transcribeButton: MaterialButton
+    private lateinit var cancelButton: MaterialButton
+    private lateinit var saveButton: MaterialButton
+    private lateinit var playPauseButton: MaterialButton
+    private lateinit var restartButton: MaterialButton
+    private lateinit var themeButton: MaterialButton
     private lateinit var cacheSpinner: Spinner
     private lateinit var backendSpinner: Spinner
     private lateinit var songVolume: SeekBar
@@ -56,6 +62,7 @@ class MainActivity : AppCompatActivity() {
     private var preview: LivePreviewController? = null
     private var noteCount = 0
     private var lastProgressPost = 0L
+    private var darkMode = true
 
     private val pickAudio = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -72,7 +79,7 @@ class MainActivity : AppCompatActivity() {
             lastMidi = null
             saveButton.isEnabled = false
             pianoRoll.reset()
-            previewStatus.text = "Preview will start after the first safe MIDI buffer is generated"
+            previewStatus.text = "Preview starts after a safe MIDI buffer is generated"
             refreshButtons()
         }
     }
@@ -91,7 +98,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        darkMode = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getBoolean(KEY_DARK_THEME, true)
+        AppCompatDelegate.setDefaultNightMode(
+            if (darkMode) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO,
+        )
         super.onCreate(savedInstanceState)
+
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !darkMode
+            isAppearanceLightNavigationBars = !darkMode
+        }
+        window.statusBarColor = getColor(R.color.app_background)
+        window.navigationBarColor = getColor(R.color.app_background)
+
         downloader = ModelDownloader(this)
         buildUi()
         refreshModelState()
@@ -104,183 +124,204 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildUi() {
-        val density = resources.displayMetrics.density
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(
-                (18 * density).toInt(),
-                (18 * density).toInt(),
-                (18 * density).toInt(),
-                (28 * density).toInt(),
-            )
+            setPadding(16.dp, 18.dp, 16.dp, 30.dp)
+            setBackgroundColor(getColor(R.color.app_background))
         }
-        val scroll = ScrollView(this).apply { addView(root) }
-
-        root.addView(TextView(this).apply {
-            text = "MuScriptor Mobile"
-            textSize = 28f
-            setTypeface(typeface, Typeface.BOLD)
-        })
-        root.addView(TextView(this).apply {
-            text = "Offline INT4 audio-to-MIDI • buffered real-time song + MIDI preview"
-            textSize = 14f
-            alpha = 0.75f
-        }, margin(bottom = 18))
-
-        root.addView(sectionTitle("Model"))
-        modelStatus = TextView(this)
-        root.addView(modelStatus, margin(bottom = 8))
-        downloadButton = Button(this).apply {
-            text = "Download / verify model (213 MiB)"
-            setOnClickListener { downloadModel() }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+            setBackgroundColor(getColor(R.color.app_background))
+            addView(root)
         }
-        root.addView(downloadButton, matchWidth())
 
-        root.addView(sectionTitle("Memory profile"), margin(top = 18))
-        cacheSpinner = Spinner(this)
-        val profiles = listOf(
-            "Recommended • 1024 cache (~192 MiB)",
-            "Safer • 896 cache (~168 MiB)",
-            "Ultra low memory • 768 cache (~144 MiB)",
-        )
-        cacheSpinner.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            profiles,
-        )
-        root.addView(cacheSpinner, matchWidth())
-
-        root.addView(sectionTitle("Compute backend"), margin(top = 18))
-        backendSpinner = Spinner(this)
-        backendSpinner.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            ComputeBackend.values().map { it.displayName },
-        )
-        root.addView(backendSpinner, matchWidth())
-        root.addView(TextView(this).apply {
-            text = "NNAPI asks Android to use the phone's NPU/GPU. Unsupported model nodes remain on the optimized CPU backend; FP16 mode may be faster but can slightly change output."
-            textSize = 12f
-            alpha = 0.68f
-        }, margin(top = 5))
-
-        root.addView(sectionTitle("Audio"), margin(top = 18))
-        audioStatus = TextView(this).apply { text = "No audio selected" }
-        root.addView(audioStatus, margin(bottom = 8))
-        pickButton = Button(this).apply {
-            text = "Choose audio"
-            setOnClickListener { pickAudio.launch(arrayOf("audio/*")) }
-        }
-        root.addView(pickButton, matchWidth())
-
-        transcribeButton = Button(this).apply {
-            text = "Transcribe + start live preview"
-            setOnClickListener { startTranscription() }
-        }
-        root.addView(
-            transcribeButton,
-            margin(top = 10, width = LinearLayout.LayoutParams.MATCH_PARENT),
-        )
-
-        cancelButton = Button(this).apply {
-            text = "Cancel transcription"
-            visibility = View.GONE
-            setOnClickListener { currentTask?.cancel() }
-        }
-        root.addView(
-            cancelButton,
-            margin(top = 8, width = LinearLayout.LayoutParams.MATCH_PARENT),
-        )
-
-        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 1000
-            progress = 0
-        }
-        root.addView(
-            progress,
-            margin(top = 18, width = LinearLayout.LayoutParams.MATCH_PARENT),
-        )
-        inferenceStatus = TextView(this).apply {
-            text = "Ready"
-            gravity = Gravity.START
-        }
-        root.addView(inferenceStatus, margin(top = 8, bottom = 10))
-
-        root.addView(sectionTitle("Live preview"), margin(top = 6))
-        root.addView(TextView(this).apply {
-            text = "Playback targets a 3.0 s finalized-MIDI lead. It slows with pitch preserved when inference gets close."
-            textSize = 13f
-            alpha = 0.75f
-        }, margin(bottom = 8))
-
-        previewStatus = TextView(this).apply {
-            text = "Preview has not started"
-        }
-        root.addView(previewStatus, margin(bottom = 8))
-
-        val transport = LinearLayout(this).apply {
+        val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
-        playPauseButton = Button(this).apply {
-            text = "Pause preview"
-            isEnabled = false
-            setOnClickListener { preview?.togglePause() }
+        val titleBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
         }
-        restartButton = Button(this).apply {
-            text = "Restart"
-            isEnabled = false
-            setOnClickListener { preview?.restart() }
-        }
-        transport.addView(playPauseButton, weighted())
-        transport.addView(restartButton, weighted())
-        root.addView(transport, matchWidth())
+        titleBlock.addView(TextView(this).apply {
+            text = "MuScriptor"
+            textSize = 30f
+            letterSpacing = -0.025f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(getColor(R.color.app_on_surface))
+        })
+        titleBlock.addView(TextView(this).apply {
+            text = "Offline audio to MIDI"
+            textSize = 14f
+            setTextColor(getColor(R.color.app_on_surface_variant))
+        }, margin(top = 2))
+        header.addView(titleBlock, weighted())
 
-        songVolumeLabel = TextView(this)
-        root.addView(songVolumeLabel, margin(top = 10))
-        songVolume = volumeSeekBar(DEFAULT_SONG_PERCENT) { percent ->
-            songVolumeLabel.text = "Original song • $percent%"
-            preview?.setSongVolume(percent / 100f)
+        themeButton = compactButton(if (darkMode) "☀  Light" else "☾  Dark").apply {
+            setOnClickListener { toggleTheme() }
         }
-        root.addView(songVolume, matchWidth())
-
-        midiVolumeLabel = TextView(this)
-        root.addView(midiVolumeLabel, margin(top = 4))
-        midiVolume = volumeSeekBar(DEFAULT_MIDI_PERCENT) { percent ->
-            midiVolumeLabel.text = "Generated MIDI • $percent%"
-            preview?.setMidiVolume(percent / 100f)
-        }
-        root.addView(midiVolume, matchWidth())
-        songVolumeLabel.text = "Original song • $DEFAULT_SONG_PERCENT%"
-        midiVolumeLabel.text = "Generated MIDI • $DEFAULT_MIDI_PERCENT%"
-
-        pianoRoll = PianoRollView(this)
-        root.addView(
-            pianoRoll,
-            margin(
-                top = 10,
-                width = LinearLayout.LayoutParams.MATCH_PARENT,
-                height = (320 * density).toInt(),
-                bottom = 12,
-            ),
-        )
-
-        saveButton = Button(this).apply {
-            text = "Export MIDI"
-            isEnabled = false
-            setOnClickListener {
-                val stem = selectedName.substringBeforeLast('.').ifBlank { "transcription" }
-                createMidi.launch("$stem.mid")
-            }
-        }
-        root.addView(saveButton, matchWidth())
+        header.addView(themeButton, wrapWidth())
+        root.addView(header, matchWidth())
 
         root.addView(TextView(this).apply {
-            text = "The model is CC BY-NC 4.0. Only transcribe audio you have the necessary rights to use."
-            textSize = 12f
-            alpha = 0.65f
-        }, margin(top = 18))
+            text = "INT4 transcription • buffered live MIDI preview • CPU / GPU / NPU modes"
+            textSize = 12.5f
+            setTextColor(getColor(R.color.app_on_surface_variant))
+            setLineSpacing(2f, 1f)
+        }, margin(top = 12, bottom = 18, width = LinearLayout.LayoutParams.MATCH_PARENT))
+
+        root.addView(sectionCard("Model") {
+            modelStatus = statusText("Checking local model…")
+            addView(modelStatus, margin(bottom = 12, width = LinearLayout.LayoutParams.MATCH_PARENT))
+            downloadButton = secondaryButton("Download / verify model  ·  213 MiB").apply {
+                setOnClickListener { downloadModel() }
+            }
+            addView(downloadButton, matchWidth())
+        }, cardMargin())
+
+        root.addView(sectionCard("Runtime") {
+            addView(fieldLabel("Memory profile"))
+            cacheSpinner = themedSpinner(
+                listOf(
+                    "Recommended · 1024 cache (~192 MiB)",
+                    "Safer · 896 cache (~168 MiB)",
+                    "Ultra low memory · 768 cache (~144 MiB)",
+                ),
+            )
+            addView(cacheSpinner, fieldMargin())
+
+            addView(fieldLabel("Compute backend"), margin(top = 14))
+            backendSpinner = themedSpinner(ComputeBackend.values().map { it.displayName })
+            addView(backendSpinner, fieldMargin())
+
+            addView(hintText(
+                "Android chooses whether NNAPI uses the GPU or NPU. Parallel mode prepares the next chunk on the accelerator while the current decoder runs on CPU.",
+            ), margin(top = 9, width = LinearLayout.LayoutParams.MATCH_PARENT))
+        }, cardMargin())
+
+        root.addView(sectionCard("Audio") {
+            audioStatus = statusText("No audio selected")
+            addView(audioStatus, margin(bottom = 12, width = LinearLayout.LayoutParams.MATCH_PARENT))
+
+            pickButton = secondaryButton("Choose audio").apply {
+                setOnClickListener { pickAudio.launch(arrayOf("audio/*")) }
+            }
+            addView(pickButton, matchWidth())
+
+            transcribeButton = primaryButton("Transcribe + start live preview").apply {
+                setOnClickListener { startTranscription() }
+            }
+            addView(transcribeButton, margin(top = 10, width = LinearLayout.LayoutParams.MATCH_PARENT))
+
+            cancelButton = dangerButton("Cancel transcription").apply {
+                visibility = View.GONE
+                setOnClickListener { currentTask?.cancel() }
+            }
+            addView(cancelButton, margin(top = 10, width = LinearLayout.LayoutParams.MATCH_PARENT))
+
+            progress = ProgressBar(
+                this@MainActivity,
+                null,
+                android.R.attr.progressBarStyleHorizontal,
+            ).apply {
+                max = 1000
+                progress = 0
+                progressTintList = colorState(R.color.app_primary)
+                progressBackgroundTintList = colorState(R.color.app_surface_variant)
+            }
+            addView(progress, margin(top = 16, width = LinearLayout.LayoutParams.MATCH_PARENT))
+
+            inferenceStatus = hintText("Ready")
+            addView(inferenceStatus, margin(top = 9, width = LinearLayout.LayoutParams.MATCH_PARENT))
+        }, cardMargin())
+
+        root.addView(sectionCard("Live preview") {
+            addView(hintText(
+                "Playback targets a 3-second finalized-MIDI lead and slows without changing pitch when inference gets close.",
+            ), margin(bottom = 10, width = LinearLayout.LayoutParams.MATCH_PARENT))
+
+            previewStatus = statusText("Preview has not started")
+            addView(previewStatus, margin(bottom = 12, width = LinearLayout.LayoutParams.MATCH_PARENT))
+
+            val transport = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+            }
+            playPauseButton = secondaryButton("Pause").apply {
+                isEnabled = false
+                setOnClickListener { preview?.togglePause() }
+            }
+            restartButton = secondaryButton("Restart").apply {
+                isEnabled = false
+                setOnClickListener { preview?.restart() }
+            }
+            transport.addView(playPauseButton, weighted(right = 5))
+            transport.addView(restartButton, weighted(left = 5))
+            addView(transport, matchWidth())
+
+            songVolumeLabel = fieldLabel("Original song  ·  $DEFAULT_SONG_PERCENT%")
+            addView(songVolumeLabel, margin(top = 14))
+            songVolume = volumeSeekBar(DEFAULT_SONG_PERCENT) { percent ->
+                songVolumeLabel.text = "Original song  ·  $percent%"
+                preview?.setSongVolume(percent / 100f)
+            }
+            addView(songVolume, matchWidth())
+
+            midiVolumeLabel = fieldLabel("Generated MIDI  ·  $DEFAULT_MIDI_PERCENT%")
+            addView(midiVolumeLabel, margin(top = 7))
+            midiVolume = volumeSeekBar(DEFAULT_MIDI_PERCENT) { percent ->
+                midiVolumeLabel.text = "Generated MIDI  ·  $percent%"
+                preview?.setMidiVolume(percent / 100f)
+            }
+            addView(midiVolume, matchWidth())
+
+            pianoRoll = PianoRollView(this@MainActivity).apply {
+                setDarkMode(darkMode)
+            }
+            addView(
+                pianoRoll,
+                margin(
+                    top = 12,
+                    width = LinearLayout.LayoutParams.MATCH_PARENT,
+                    height = 300.dp,
+                    bottom = 12,
+                ),
+            )
+
+            saveButton = secondaryButton("Export MIDI").apply {
+                isEnabled = false
+                setOnClickListener {
+                    val stem = selectedName.substringBeforeLast('.').ifBlank { "transcription" }
+                    createMidi.launch("$stem.mid")
+                }
+            }
+            addView(saveButton, matchWidth())
+        }, cardMargin())
+
+        root.addView(TextView(this).apply {
+            text = "MuScriptor model: CC BY-NC 4.0 · Use audio you have permission to process."
+            textSize = 11.5f
+            gravity = Gravity.CENTER
+            setTextColor(getColor(R.color.app_on_surface_variant))
+        }, margin(top = 16, width = LinearLayout.LayoutParams.MATCH_PARENT))
 
         setContentView(scroll)
+    }
+
+    private fun toggleTheme() {
+        if (currentTask?.isActive == true) {
+            Toast.makeText(this, "Finish or cancel the current task before changing theme", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val newDarkMode = !darkMode
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_DARK_THEME, newDarkMode)
+            .apply()
+        delegate.localNightMode = if (newDarkMode) {
+            AppCompatDelegate.MODE_NIGHT_YES
+        } else {
+            AppCompatDelegate.MODE_NIGHT_NO
+        }
     }
 
     private fun downloadModel() {
@@ -296,7 +337,7 @@ class MainActivity : AppCompatActivity() {
                                 progress.progress = (
                                     state.downloaded.toDouble() / state.total * progress.max
                                 ).toInt().coerceIn(0, progress.max)
-                                inferenceStatus.text = "${state.fileName} • ${formatBytes(state.downloaded)} / ${formatBytes(state.total)}"
+                                inferenceStatus.text = "${state.fileName} · ${formatBytes(state.downloaded)} / ${formatBytes(state.total)}"
                             }
                         },
                         onStatus = { status ->
@@ -307,7 +348,7 @@ class MainActivity : AppCompatActivity() {
                 progress.progress = progress.max
                 Toast.makeText(this@MainActivity, "Model ready", Toast.LENGTH_SHORT).show()
             } catch (_: CancellationException) {
-                inferenceStatus.text = "Download cancelled; it can resume later"
+                inferenceStatus.text = "Download cancelled · it can resume later"
             } catch (error: Throwable) {
                 showError(error)
             } finally {
@@ -350,7 +391,7 @@ class MainActivity : AppCompatActivity() {
                             lastProgressPost = now
                             runOnUiThread {
                                 progress.progress = (fraction * 120).toInt().coerceIn(0, 120)
-                                inferenceStatus.text = "Decoding audio • ${(fraction * 100).toInt()}%"
+                                inferenceStatus.text = "Decoding audio · ${(fraction * 100).toInt()}%"
                             }
                         }
                     }
@@ -368,7 +409,7 @@ class MainActivity : AppCompatActivity() {
 
                 inferenceStatus.text = String.format(
                     Locale.US,
-                    "Loaded %.1f s • initializing %s…",
+                    "Loaded %.1f s · initializing %s…",
                     decoded.durationSeconds,
                     requestedBackend.shortName,
                 )
@@ -406,22 +447,22 @@ class MainActivity : AppCompatActivity() {
                                 )
                                 preview?.updateFinalizedFrontier(finalizedSeconds)
                                 val now = System.currentTimeMillis()
-                                if (now - lastProgressPost >= 70 || state.completedChunks == state.totalChunks) {
+                                if (now - lastProgressPost >= 90 || state.completedChunks == state.totalChunks) {
                                     lastProgressPost = now
                                     runOnUiThread {
                                         val chunkFraction = state.completedChunks.toDouble() / state.totalChunks
                                         progress.progress = (120 + chunkFraction * 880).toInt().coerceIn(0, 1000)
                                         inferenceStatus.text = buildString {
                                             append(activeBackendName)
-                                            append(" • ")
+                                            append(" · ")
                                             append(state.message)
-                                            append(" • ")
+                                            append(" · ")
                                             append(noteCount)
-                                            append(" notes • ")
+                                            append(" notes · ")
                                             append(state.generatedTokens)
                                             append(" tokens")
                                             if (state.lastTokenMillis > 0.0) {
-                                                append(" • ")
+                                                append(" · ")
                                                 append(String.format(Locale.US, "%.1f ms/token", state.lastTokenMillis))
                                             }
                                         }
@@ -436,7 +477,7 @@ class MainActivity : AppCompatActivity() {
                 lastMidi = result.midi
                 progress.progress = progress.max
                 saveButton.isEnabled = true
-                inferenceStatus.text = "Done • $activeBackendName • ${result.notes.size} notes • ${result.generatedTokens} tokens"
+                inferenceStatus.text = "Done · $activeBackendName · ${result.notes.size} notes · ${result.generatedTokens} tokens"
                 Toast.makeText(this@MainActivity, "Transcription complete", Toast.LENGTH_SHORT).show()
             } catch (_: CancellationException) {
                 inferenceStatus.text = "Transcription cancelled"
@@ -455,22 +496,22 @@ class MainActivity : AppCompatActivity() {
         pianoRoll.setCursor(state.positionSeconds)
         restartButton.isEnabled = state.started
         playPauseButton.isEnabled = state.started
-        playPauseButton.text = if (state.playing) "Pause preview" else "Resume preview"
+        playPauseButton.text = if (state.playing) "Pause" else "Resume"
         previewStatus.text = when {
             !state.prepared -> "Preparing original audio player…"
             !state.started -> String.format(
                 Locale.US,
-                "Buffering finalized MIDI • %.1f / 3.5 s",
+                "Buffering finalized MIDI · %.1f / 3.5 s",
                 state.finalizedFrontierSeconds,
             )
             state.waitingForBuffer -> String.format(
                 Locale.US,
-                "%s • emergency buffer hold",
+                "%s · emergency buffer hold",
                 formatTime(state.positionSeconds),
             )
             else -> String.format(
                 Locale.US,
-                "%s • lead %.1f s • %.2fx pitch-preserved",
+                "%s · lead %.1f s · %.2fx pitch-preserved",
                 formatTime(state.positionSeconds),
                 state.leadSeconds.coerceAtLeast(0.0),
                 state.speed,
@@ -480,9 +521,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshModelState() {
         modelStatus.text = if (downloader.isReady()) {
-            "Ready • verified local model"
+            "Ready · verified local model"
         } else {
-            "Not downloaded • no Hugging Face account/token required"
+            "Not downloaded · no account or token required"
         }
         refreshButtons()
     }
@@ -493,6 +534,7 @@ class MainActivity : AppCompatActivity() {
         pickButton.isEnabled = !busy
         cacheSpinner.isEnabled = !busy
         backendSpinner.isEnabled = !busy
+        themeButton.isEnabled = !busy
         transcribeButton.isEnabled = !busy && downloader.isReady() && selectedAudio != null
         saveButton.isEnabled = !busy && lastMidi != null
     }
@@ -512,7 +554,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showError(error: Throwable) {
         val message = error.message ?: error.javaClass.simpleName
-        inferenceStatus.text = "Error: $message"
+        inferenceStatus.text = "Error · $message"
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
@@ -526,9 +568,126 @@ class MainActivity : AppCompatActivity() {
         if (cursor.moveToFirst()) cursor.getString(0) else null
     }
 
+    private fun sectionCard(
+        title: String,
+        content: LinearLayout.() -> Unit,
+    ): MaterialCardView {
+        val card = MaterialCardView(this).apply {
+            radius = 18.dp.toFloat()
+            cardElevation = 0f
+            strokeWidth = 1.dp
+            setStrokeColor(getColor(R.color.app_outline))
+            setCardBackgroundColor(getColor(R.color.app_surface))
+        }
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16.dp, 16.dp, 16.dp, 16.dp)
+            addView(TextView(this@MainActivity).apply {
+                text = title
+                textSize = 17f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(getColor(R.color.app_on_surface))
+            }, margin(bottom = 13))
+            content()
+        }
+        card.addView(body)
+        return card
+    }
+
+    private fun statusText(value: String) = TextView(this).apply {
+        text = value
+        textSize = 14f
+        setTextColor(getColor(R.color.app_on_surface))
+        setLineSpacing(2f, 1f)
+    }
+
+    private fun fieldLabel(value: String) = TextView(this).apply {
+        text = value
+        textSize = 12.5f
+        setTypeface(typeface, Typeface.BOLD)
+        setTextColor(getColor(R.color.app_on_surface_variant))
+    }
+
+    private fun hintText(value: String) = TextView(this).apply {
+        text = value
+        textSize = 12.5f
+        setTextColor(getColor(R.color.app_on_surface_variant))
+        setLineSpacing(3f, 1f)
+    }
+
+    private fun primaryButton(value: String) = baseButton(value).apply {
+        backgroundTintList = colorState(R.color.app_primary)
+        setTextColor(getColor(R.color.app_on_primary))
+        strokeWidth = 0
+    }
+
+    private fun secondaryButton(value: String) = baseButton(value).apply {
+        backgroundTintList = colorState(R.color.app_surface_variant)
+        setTextColor(getColor(R.color.app_on_surface))
+        strokeWidth = 1.dp
+        strokeColor = colorState(R.color.app_outline)
+    }
+
+    private fun dangerButton(value: String) = baseButton(value).apply {
+        backgroundTintList = colorState(R.color.app_error)
+        setTextColor(getColor(R.color.app_on_error))
+        strokeWidth = 0
+    }
+
+    private fun compactButton(value: String) = secondaryButton(value).apply {
+        minHeight = 42.dp
+        minimumHeight = 42.dp
+        setPadding(14.dp, 0, 14.dp, 0)
+        textSize = 12.5f
+    }
+
+    private fun baseButton(value: String) = MaterialButton(this).apply {
+        text = value
+        isAllCaps = false
+        textSize = 14f
+        cornerRadius = 12.dp
+        minHeight = 50.dp
+        minimumHeight = 50.dp
+        insetTop = 0
+        insetBottom = 0
+        setTypeface(typeface, Typeface.BOLD)
+    }
+
+    private fun themedSpinner(items: List<String>) = Spinner(this).apply {
+        adapter = object : ArrayAdapter<String>(
+            this@MainActivity,
+            android.R.layout.simple_spinner_item,
+            items,
+        ) {
+            init {
+                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            }
+
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
+                styleSpinnerText(super.getView(position, convertView, parent) as TextView, false)
+
+            override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View =
+                styleSpinnerText(super.getDropDownView(position, convertView, parent) as TextView, true)
+        }
+        minimumHeight = 50.dp
+        setPadding(10.dp, 0, 10.dp, 0)
+        backgroundTintList = colorState(R.color.app_outline)
+        popupBackgroundDrawable?.setTint(getColor(R.color.app_surface))
+    }
+
+    private fun styleSpinnerText(view: TextView, dropdown: Boolean): TextView = view.apply {
+        textSize = 14f
+        setTextColor(getColor(R.color.app_on_surface))
+        setPadding(12.dp, if (dropdown) 14.dp else 0, 12.dp, if (dropdown) 14.dp else 0)
+        if (dropdown) setBackgroundColor(getColor(R.color.app_surface))
+    }
+
     private fun volumeSeekBar(initial: Int, onChanged: (Int) -> Unit) = SeekBar(this).apply {
         max = 100
         progress = initial
+        progressTintList = colorState(R.color.app_primary)
+        thumbTintList = colorState(R.color.app_primary)
+        progressBackgroundTintList = colorState(R.color.app_surface_variant)
         setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, value: Int, fromUser: Boolean) {
                 onChanged(value)
@@ -539,21 +698,34 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    private fun sectionTitle(text: String) = TextView(this).apply {
-        this.text = text
-        textSize = 18f
-        setTypeface(typeface, Typeface.BOLD)
-    }
+    private fun colorState(colorRes: Int) = ColorStateList.valueOf(getColor(colorRes))
 
     private fun matchWidth() = LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT,
         LinearLayout.LayoutParams.WRAP_CONTENT,
     )
 
-    private fun weighted() = LinearLayout.LayoutParams(
+    private fun wrapWidth() = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+    )
+
+    private fun weighted(left: Int = 0, right: Int = 0) = LinearLayout.LayoutParams(
         0,
         LinearLayout.LayoutParams.WRAP_CONTENT,
         1f,
+    ).apply {
+        setMargins(left.dp, 0, right.dp, 0)
+    }
+
+    private fun cardMargin() = margin(
+        top = 10,
+        width = LinearLayout.LayoutParams.MATCH_PARENT,
+    )
+
+    private fun fieldMargin() = margin(
+        top = 6,
+        width = LinearLayout.LayoutParams.MATCH_PARENT,
     )
 
     private fun margin(
@@ -562,9 +734,11 @@ class MainActivity : AppCompatActivity() {
         width: Int = LinearLayout.LayoutParams.WRAP_CONTENT,
         height: Int = LinearLayout.LayoutParams.WRAP_CONTENT,
     ) = LinearLayout.LayoutParams(width, height).apply {
-        val density = resources.displayMetrics.density
-        setMargins(0, (top * density).toInt(), 0, (bottom * density).toInt())
+        setMargins(0, top.dp, 0, bottom.dp)
     }
+
+    private val Int.dp: Int
+        get() = (this * resources.displayMetrics.density).toInt()
 
     private fun formatBytes(bytes: Long): String = String.format(
         Locale.US,
@@ -578,6 +752,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val PREFS_NAME = "muscriptor_ui"
+        private const val KEY_DARK_THEME = "dark_theme"
         private const val DEFAULT_SONG_PERCENT = 20
         private const val DEFAULT_MIDI_PERCENT = 80
         private const val CHUNK_SECONDS = 5.0
