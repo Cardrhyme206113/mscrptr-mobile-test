@@ -24,14 +24,14 @@ enum class CachePrecision(
         usesFullCacheBoundaryConversion = false,
     ),
     FP16(
-        displayName = "FP16 compatibility · slow",
-        shortName = "FP16 compat",
+        displayName = "FP16 native GQA · recommended",
+        shortName = "FP16 native",
         bytesNumerator = 2,
         bytesDenominator = 1,
-        assetFileName = "decoder-cache-fp16.onnx",
+        assetFileName = "decoder-cache-fp16-native-gqa.onnx",
         storage = Storage.FP16,
-        qualityNote = "Legacy half-size cache that converts the complete cache around attention.",
-        usesFullCacheBoundaryConversion = true,
+        qualityNote = "Fused attention reads and writes FP16 KV directly; only small QKV activations are cast.",
+        usesFullCacheBoundaryConversion = false,
     ),
     BF16(
         displayName = "BF16 compatibility · slow",
@@ -83,15 +83,15 @@ enum class CachePrecision(
         qualityNote = "8× smaller than FP32; experimental ±8 range with 1.0 steps.",
         usesFullCacheBoundaryConversion = true,
     ),
-    FP16_NATIVE_GQA(
-        displayName = "FP16 native GQA · recommended",
-        shortName = "FP16 native",
+    FP16_COMPAT(
+        displayName = "FP16 compatibility · legacy slow",
+        shortName = "FP16 compat",
         bytesNumerator = 2,
         bytesDenominator = 1,
-        assetFileName = "decoder-cache-fp16-native-gqa.onnx",
+        assetFileName = "decoder-cache-fp16.onnx",
         storage = Storage.FP16,
-        qualityNote = "Fused attention reads and writes FP16 KV directly; only small QKV activations are cast.",
-        usesFullCacheBoundaryConversion = false,
+        qualityNote = "Legacy half-size cache that converts the complete cache around attention.",
+        usesFullCacheBoundaryConversion = true,
     );
 
     enum class Storage {
