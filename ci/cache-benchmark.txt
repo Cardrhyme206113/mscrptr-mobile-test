@@ -1,4 +1,4 @@
-FP32: first=1923.92 ms, steady_median=20.16 ms/token, steps=10, cache=768
-FP16 native GQA: first=1921.44 ms, steady_median=15.50 ms/token, steps=10, cache=768
-FP16 compatibility: first=1939.59 ms, steady_median=28.05 ms/token, steps=10, cache=768
-ratios vs FP32 steady: native=0.769x, compat=1.391x
+FP32: first=1935.52 ms, steady_median=19.90 ms/token, steps=10, cache=768
+FP16 native GQA: first=1927.90 ms, steady_median=15.57 ms/token, steps=10, cache=768
+FP16 compatibility: first=1948.64 ms, steady_median=28.65 ms/token, steps=10, cache=768
+ratios vs FP32 steady: native=0.782x, compat=1.440x
