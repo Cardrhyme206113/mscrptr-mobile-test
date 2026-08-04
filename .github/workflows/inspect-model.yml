@@ -8,7 +8,7 @@ on:
       - 'tools/inspect_model.py'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   inspect:
@@ -28,3 +28,10 @@ jobs:
           name: model-inspection
           path: model-inspection.txt
           if-no-files-found: error
+      - name: Commit inspection report
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add model-inspection.txt
+          git commit -m "docs: update ONNX inspection report" || exit 0
+          git push
