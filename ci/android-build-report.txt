@@ -1,6 +1,6 @@
 exit_code=0
-commit=dd1e7ecca68e67513b0f5af383b6df4fd730b74c
-generated_at=2026-08-04T12:32:04Z
+commit=efa8b4b90f4ee0c2a5e4fc42237bad12d3635e65
+generated_at=2026-08-04T13:26:07Z
 
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.11.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
 Daemon will be stopped at the end of the build 
@@ -15,8 +15,8 @@ Daemon will be stopped at the end of the build
 > Task :app:createDebugCompatibleScreenManifests
 > Task :app:extractDeepLinksDebug
 > Task :app:parseDebugLocalResources
-> Task :app:mergeDebugResources
 > Task :app:processDebugMainManifest
+> Task :app:mergeDebugResources
 > Task :app:processDebugManifest
 > Task :app:processDebugManifestForPackage
 > Task :app:javaPreCompileDebug
@@ -64,7 +64,7 @@ w: file:///home/runner/work/mscrptr-mobile-test/mscrptr-mobile-test/app/src/main
 > Task :app:packageDebug
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/build-1785846681097.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/build-1785849923391.json
 
-BUILD SUCCESSFUL in 47s
+BUILD SUCCESSFUL in 48s
 41 actionable tasks: 41 executed
