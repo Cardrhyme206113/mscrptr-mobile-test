@@ -2,7 +2,19 @@
 <resources>
     <style name="Theme.MuScriptorMobile" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:navigationBarColor">?attr/colorSurface</item>
+        <item name="colorPrimary">@color/app_primary</item>
+        <item name="colorOnPrimary">@color/app_on_primary</item>
+        <item name="colorSurface">@color/app_surface</item>
+        <item name="colorOnSurface">@color/app_on_surface</item>
+        <item name="colorSurfaceVariant">@color/app_surface_variant</item>
+        <item name="colorOnSurfaceVariant">@color/app_on_surface_variant</item>
+        <item name="colorOutline">@color/app_outline</item>
+        <item name="colorError">@color/app_error</item>
+        <item name="colorOnError">@color/app_on_error</item>
+        <item name="android:colorBackground">@color/app_background</item>
+        <item name="android:windowBackground">@color/app_background</item>
+        <item name="android:statusBarColor">@color/app_background</item>
+        <item name="android:navigationBarColor">@color/app_background</item>
+        <item name="android:windowActionModeOverlay">true</item>
     </style>
 </resources>

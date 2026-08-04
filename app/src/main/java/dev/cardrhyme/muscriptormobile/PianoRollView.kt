@@ -40,28 +40,59 @@ class PianoRollView @JvmOverloads constructor(
     private var cursorSeconds = 0.0
     private val minimumPitch = 24
     private val maximumPitch = 108
+    private var darkMode = true
 
-    private val backgroundPaint = Paint().apply { color = Color.rgb(12, 14, 20) }
+    private val backgroundPaint = Paint()
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(70, 210, 220, 255)
         strokeWidth = resources.displayMetrics.density
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(190, 225, 230, 245)
         textSize = 11f * resources.displayMetrics.scaledDensity
     }
     private val notePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val cursorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
         strokeWidth = 2f * resources.displayMetrics.density
     }
-    private val programColors = IntArray(129) { program ->
-        val hue = if (program == 128) 8f else ((program * 47) % 360).toFloat()
-        Color.HSVToColor(floatArrayOf(hue, 0.62f, 0.95f))
-    }
+    private val programColors = IntArray(129)
     private val noteNames = arrayOf(
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
     )
+
+    init {
+        updatePalette()
+        clipToOutline = true
+    }
+
+    fun setDarkMode(enabled: Boolean) {
+        if (darkMode == enabled) return
+        darkMode = enabled
+        updatePalette()
+        invalidate()
+    }
+
+    private fun updatePalette() {
+        if (darkMode) {
+            backgroundPaint.color = Color.rgb(12, 14, 20)
+            gridPaint.color = Color.argb(70, 210, 220, 255)
+            labelPaint.color = Color.argb(190, 225, 230, 245)
+            cursorPaint.color = Color.WHITE
+        } else {
+            backgroundPaint.color = Color.rgb(244, 245, 249)
+            gridPaint.color = Color.argb(42, 25, 29, 42)
+            labelPaint.color = Color.rgb(91, 97, 113)
+            cursorPaint.color = Color.rgb(23, 24, 32)
+        }
+        for (program in programColors.indices) {
+            val hue = if (program == 128) 8f else ((program * 47) % 360).toFloat()
+            programColors[program] = Color.HSVToColor(
+                floatArrayOf(
+                    hue,
+                    if (darkMode) 0.62f else 0.70f,
+                    if (darkMode) 0.95f else 0.80f,
+                ),
+            )
+        }
+    }
 
     fun reset() {
         pendingEvents.clear()
@@ -155,8 +186,6 @@ class PianoRollView @JvmOverloads constructor(
             }
         }
 
-        // Notes shorter than the viewport can only overlap it when their onset is at most one
-        // viewport earlier. This bounds drawing work regardless of total song length.
         val firstBucket = floor(visibleStart - WINDOW_SECONDS).toInt()
         for (bucket in firstBucket..lastSecond) {
             completedBuckets[bucket]?.forEach { note ->
