@@ -1,0 +1,38 @@
+name: Inspect decoder cache graph
+
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect-cache.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Inspect graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet 'onnx>=1.17,<2'
+          mkdir -p .cache/muscriptor ci
+          curl -L --fail --retry 4 --retry-delay 2 \
+            -o .cache/muscriptor/decoder.onnx \
+            'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx?download=true'
+          python tools/inspect_decoder_graph.py --decoder .cache/muscriptor/decoder.onnx > ci/decoder-graph.txt
+          cat ci/decoder-graph.txt
+      - name: Persist graph report
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add ci/decoder-graph.txt
+          git commit -m 'ci: record decoder graph topology' || exit 0
+          git push
