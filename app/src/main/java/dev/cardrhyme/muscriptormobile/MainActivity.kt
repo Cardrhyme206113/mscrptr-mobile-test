@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var playPauseButton: Button
     private lateinit var restartButton: Button
     private lateinit var cacheSpinner: Spinner
+    private lateinit var backendSpinner: Spinner
     private lateinit var songVolume: SeekBar
     private lateinit var midiVolume: SeekBar
     private lateinit var pianoRoll: PianoRollView
@@ -148,6 +149,20 @@ class MainActivity : AppCompatActivity() {
             profiles,
         )
         root.addView(cacheSpinner, matchWidth())
+
+        root.addView(sectionTitle("Compute backend"), margin(top = 18))
+        backendSpinner = Spinner(this)
+        backendSpinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            ComputeBackend.values().map { it.displayName },
+        )
+        root.addView(backendSpinner, matchWidth())
+        root.addView(TextView(this).apply {
+            text = "NNAPI asks Android to use the phone's NPU/GPU. Unsupported model nodes remain on the optimized CPU backend; FP16 mode may be faster but can slightly change output."
+            textSize = 12f
+            alpha = 0.68f
+        }, margin(top = 5))
 
         root.addView(sectionTitle("Audio"), margin(top = 18))
         audioStatus = TextView(this).apply { text = "No audio selected" }
@@ -322,6 +337,9 @@ class MainActivity : AppCompatActivity() {
             2 -> 768
             else -> 1024
         }
+        val requestedBackend = ComputeBackend.values().getOrElse(
+            backendSpinner.selectedItemPosition,
+        ) { ComputeBackend.CPU }
 
         currentTask = lifecycleScope.launch {
             try {
@@ -350,16 +368,30 @@ class MainActivity : AppCompatActivity() {
 
                 inferenceStatus.text = String.format(
                     Locale.US,
-                    "Loaded %.1f s • initializing model…",
+                    "Loaded %.1f s • initializing %s…",
                     decoded.durationSeconds,
+                    requestedBackend.shortName,
                 )
                 previewStatus.text = "Waiting for the first finalized chunk"
 
+                var activeBackendName = requestedBackend.shortName
                 val result = withContext(Dispatchers.Default) {
                     MuScriptorEngine(
                         modelDir = downloader.modelDir,
                         maxCacheLength = cacheLength,
+                        requestedBackend = requestedBackend,
                     ).use { engine ->
+                        activeBackendName = engine.activeBackend.shortName
+                        runOnUiThread {
+                            inferenceStatus.text = engine.backendStatus
+                            if (engine.activeBackend != requestedBackend) {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    engine.backendStatus,
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                        }
                         engine.transcribe(
                             samples16k = decoded.samples16k,
                             onLiveEvent = { event ->
@@ -380,6 +412,8 @@ class MainActivity : AppCompatActivity() {
                                         val chunkFraction = state.completedChunks.toDouble() / state.totalChunks
                                         progress.progress = (120 + chunkFraction * 880).toInt().coerceIn(0, 1000)
                                         inferenceStatus.text = buildString {
+                                            append(activeBackendName)
+                                            append(" • ")
                                             append(state.message)
                                             append(" • ")
                                             append(noteCount)
@@ -402,7 +436,7 @@ class MainActivity : AppCompatActivity() {
                 lastMidi = result.midi
                 progress.progress = progress.max
                 saveButton.isEnabled = true
-                inferenceStatus.text = "Done • ${result.notes.size} notes • ${result.generatedTokens} tokens"
+                inferenceStatus.text = "Done • $activeBackendName • ${result.notes.size} notes • ${result.generatedTokens} tokens"
                 Toast.makeText(this@MainActivity, "Transcription complete", Toast.LENGTH_SHORT).show()
             } catch (_: CancellationException) {
                 inferenceStatus.text = "Transcription cancelled"
@@ -458,6 +492,7 @@ class MainActivity : AppCompatActivity() {
         downloadButton.isEnabled = !busy
         pickButton.isEnabled = !busy
         cacheSpinner.isEnabled = !busy
+        backendSpinner.isEnabled = !busy
         transcribeButton.isEnabled = !busy && downloader.isReady() && selectedAudio != null
         saveButton.isEnabled = !busy && lastMidi != null
     }
