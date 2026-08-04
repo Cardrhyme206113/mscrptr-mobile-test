@@ -3,16 +3,34 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val encodedSigningStore = rootProject.file("signing/muscriptor-dev.p12.b64")
+val persistentSigningStore = layout.buildDirectory.file("signing/muscriptor-dev.p12").get().asFile
+check(encodedSigningStore.isFile) { "Persistent sideload signing store is missing" }
+persistentSigningStore.parentFile.mkdirs()
+persistentSigningStore.writeBytes(
+    java.util.Base64.getMimeDecoder().decode(encodedSigningStore.readText().trim()),
+)
+
 android {
     namespace = "dev.cardrhyme.muscriptormobile"
     compileSdk = 36
+
+    signingConfigs {
+        create("persistentSideload") {
+            storeFile = persistentSigningStore
+            storePassword = "muscriptor-dev"
+            keyAlias = "muscriptor"
+            keyPassword = "muscriptor-dev"
+            storeType = "PKCS12"
+        }
+    }
 
     defaultConfig {
         applicationId = "dev.cardrhyme.muscriptormobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.5.0"
+        versionCode = 10
+        versionName = "0.6.0"
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -22,8 +40,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("persistentSideload")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("persistentSideload")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
