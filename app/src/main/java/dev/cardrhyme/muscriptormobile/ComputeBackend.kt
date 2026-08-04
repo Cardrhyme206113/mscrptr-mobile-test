@@ -1,28 +1,44 @@
 package dev.cardrhyme.muscriptormobile
 
-/** Runtime backend requested for the ONNX Runtime conditioner and decoder sessions. */
+/** Runtime layout requested for the ONNX Runtime conditioner and decoder sessions. */
 enum class ComputeBackend(
     val displayName: String,
     val shortName: String,
-    val useNnapi: Boolean,
+    val conditionerUsesNnapi: Boolean,
+    val decoderUsesNnapi: Boolean,
     val allowFp16: Boolean,
+    val pipelineConditioner: Boolean,
 ) {
     CPU(
         displayName = "CPU • reliable",
         shortName = "CPU",
-        useNnapi = false,
+        conditionerUsesNnapi = false,
+        decoderUsesNnapi = false,
         allowFp16 = false,
+        pipelineConditioner = false,
     ),
     NNAPI(
-        displayName = "NPU / NNAPI hybrid • experimental",
+        displayName = "GPU / NPU via NNAPI • automatic",
         shortName = "NNAPI",
-        useNnapi = true,
+        conditionerUsesNnapi = true,
+        decoderUsesNnapi = true,
         allowFp16 = false,
+        pipelineConditioner = false,
     ),
     NNAPI_FP16(
-        displayName = "NPU / NNAPI hybrid + FP16 • speed test",
+        displayName = "GPU / NPU via NNAPI + FP16 • speed test",
         shortName = "NNAPI FP16",
-        useNnapi = true,
+        conditionerUsesNnapi = true,
+        decoderUsesNnapi = true,
         allowFp16 = true,
+        pipelineConditioner = false,
+    ),
+    PARALLEL_ACCELERATOR_CPU(
+        displayName = "Parallel GPU/NPU conditioner + CPU decoder • experimental",
+        shortName = "Parallel accel+CPU",
+        conditionerUsesNnapi = true,
+        decoderUsesNnapi = false,
+        allowFp16 = true,
+        pipelineConditioner = true,
     ),
 }
