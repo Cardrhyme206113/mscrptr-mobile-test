@@ -125,9 +125,9 @@ class MainActivity : AppCompatActivity() {
         root.addView(sectionTitle("Memory profile"), margin(top = 18))
         cacheSpinner = Spinner(this)
         val profiles = listOf(
-            "Balanced • 1536 cache (~288 MiB)",
-            "Full quality • 2504 cache (~470 MiB)",
-            "Low memory • 1024 cache (~192 MiB)",
+            "Recommended • 1024 cache (~192 MiB)",
+            "Safer • 896 cache (~168 MiB)",
+            "Ultra low memory • 768 cache (~144 MiB)",
         )
         cacheSpinner.adapter = ArrayAdapter(
             this,
@@ -255,9 +255,9 @@ class MainActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         val cacheLength = when (cacheSpinner.selectedItemPosition) {
-            1 -> 2504
-            2 -> 1024
-            else -> 1536
+            1 -> 896
+            2 -> 768
+            else -> 1024
         }
 
         currentTask = lifecycleScope.launch {
