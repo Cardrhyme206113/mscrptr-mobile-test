@@ -49,13 +49,15 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --quiet 'onnx>=1.17,<2' 'onnxruntime>=1.20,<2' numpy
-          mkdir -p .cache/muscriptor app/src/main/assets/cache_decoders
+          mkdir -p .cache/muscriptor app/src/main/assets/cache_decoders ci
           curl -L --fail --retry 4 --retry-delay 2 \
             -o .cache/muscriptor/decoder.onnx \
             'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx?download=true'
           curl -L --fail --retry 4 --retry-delay 2 \
             -o .cache/muscriptor/decoder.onnx.data \
             'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx.data?download=true'
+          python tools/inspect_decoder_graph.py --decoder .cache/muscriptor/decoder.onnx > ci/decoder-graph.txt
+          cat ci/decoder-graph.txt
           python tools/generate_cache_variants.py \
             --decoder .cache/muscriptor/decoder.onnx \
             --output app/src/main/assets/cache_decoders
@@ -98,8 +100,8 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add ci/android-build-report.txt
-          git commit -m "ci: update Android build report" || exit 0
+          git add ci/android-build-report.txt ci/decoder-graph.txt
+          git commit -m "ci: update Android build and decoder graph reports" || exit 0
           git push
 
       - name: Fail when build failed
