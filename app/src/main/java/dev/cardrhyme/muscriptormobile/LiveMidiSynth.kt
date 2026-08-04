@@ -73,6 +73,10 @@ class LiveMidiSynth : Closeable {
             .setBufferSizeInBytes(maxOf(minBytes * 2, output.size * Float.SIZE_BYTES * 4))
             .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
             .build()
+        check(audioTrack.state == AudioTrack.STATE_INITIALIZED) {
+            "MIDI AudioTrack failed to initialize"
+        }
+        audioTrack.setVolume(1f)
         audioTrack.play()
         renderThread = Thread(::renderLoop, "MuScriptor-midi-synth").apply {
             priority = Thread.MAX_PRIORITY
@@ -85,12 +89,13 @@ class LiveMidiSynth : Closeable {
     }
 
     fun noteOn(id: Long, program: Int, pitch: Int, isDrum: Boolean) {
-        val frequency = 440.0 * 2.0.pow((pitch - 69) / 12.0)
+        val safePitch = pitch.coerceIn(0, 127)
+        val frequency = 440.0 * 2.0.pow((safePitch - 69) / 12.0)
         synchronized(lock) {
             voices[id] = Voice(
                 id = id,
-                program = program,
-                pitch = pitch,
+                program = program.coerceIn(0, 127),
+                pitch = safePitch,
                 frequency = frequency,
                 isDrum = isDrum,
                 startedOrder = voiceOrder++,
@@ -125,11 +130,19 @@ class LiveMidiSynth : Closeable {
                     var dead = false
                     for (frame in 0 until framesPerBuffer) {
                         val amplitude = envelope(voice)
-                        if (amplitude < 0.00025f) {
+
+                        // A normal melodic attack intentionally begins at amplitude 0. The old
+                        // code treated that first zero sample as an already-finished voice and
+                        // removed every note before it could become audible. Only released voices
+                        // and naturally decaying drums are allowed to die at a low envelope level.
+                        val releaseFinished = voice.releaseSample >= 0 && amplitude < SILENCE_THRESHOLD
+                        val drumFinished = voice.isDrum && voice.ageSamples > 0 && amplitude < SILENCE_THRESHOLD
+                        if (releaseFinished || drumFinished) {
                             dead = true
                             break
                         }
-                        val sample = waveform(voice) * amplitude * 0.16f
+
+                        val sample = waveform(voice) * amplitude * 0.24f
                         val left = frame * 2
                         // Tiny program-dependent stereo spread keeps dense arrangements readable.
                         val pan = (((voice.program * 17 + voice.pitch) % 21) - 10) / 50f
@@ -235,5 +248,6 @@ class LiveMidiSynth : Closeable {
 
     companion object {
         private const val MAX_POLYPHONY = 96
+        private const val SILENCE_THRESHOLD = 0.00025f
     }
 }
