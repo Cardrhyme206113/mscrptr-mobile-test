@@ -11,8 +11,8 @@ android {
         applicationId = "dev.cardrhyme.muscriptormobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.2.0"
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -55,6 +55,7 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.1")
+    implementation("androidx.media3:media3-exoplayer:1.10.1")
     implementation("com.google.android.material:material:1.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")
