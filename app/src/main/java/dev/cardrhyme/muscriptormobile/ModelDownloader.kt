@@ -53,8 +53,8 @@ class ModelDownloader(private val context: Context) {
     /**
      * Returns the decoder graph matching the requested persistent cache format.
      *
-     * Compressed variants are tiny graph adapters bundled in the APK. They continue to reference
-     * the already-downloaded decoder.onnx.data file, so changing cache precision never downloads
+     * Cache variants are tiny graph rewrites bundled in the APK. They continue to reference the
+     * already-downloaded decoder.onnx.data file, so changing cache precision never downloads
      * another 200+ MiB model.
      */
     fun prepareCacheDecoder(precision: CachePrecision): File {
@@ -170,7 +170,7 @@ class ModelDownloader(private val context: Context) {
             connectTimeout = 30_000
             readTimeout = 60_000
             instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "MuScriptorMobile/0.6")
+            setRequestProperty("User-Agent", "MuScriptorMobile/0.7")
             if (offset > 0) setRequestProperty("Range", "bytes=$offset-")
             connect()
         }
