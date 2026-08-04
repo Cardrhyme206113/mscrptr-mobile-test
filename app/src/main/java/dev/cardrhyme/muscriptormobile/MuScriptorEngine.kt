@@ -16,7 +16,7 @@ import kotlin.math.min
 
 class MuScriptorEngine(
     private val modelDir: File,
-    private val maxCacheLength: Int = 2504,
+    private val maxCacheLength: Int = 1024,
     private val threadCount: Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 8),
 ) : Closeable {
     data class Progress(
@@ -108,7 +108,11 @@ class MuScriptorEngine(
                     totalChunks = totalChunks,
                     generatedTokens = generatedTotal,
                     lastTokenMillis = chunkGenerated.lastTokenMillis,
-                    message = "Chunk ${chunkIndex + 1}/$totalChunks complete",
+                    message = if (chunkGenerated.hitCacheLimit) {
+                        "Chunk ${chunkIndex + 1}/$totalChunks complete • cache limit reached"
+                    } else {
+                        "Chunk ${chunkIndex + 1}/$totalChunks complete"
+                    },
                 ),
             )
         }
@@ -145,7 +149,18 @@ class MuScriptorEngine(
             var pastLength = 0
             var generated = 0
             var lastMillis = 0.0
-            val generationBudget = (MAX_SEQUENCE_TOKENS - prompt.size).coerceAtLeast(1)
+
+            val firstQueryLength = conditionLength + firstIds.size
+            require(firstQueryLength <= maxCacheLength) {
+                "Cache profile too small: first pass needs $firstQueryLength positions, has $maxCacheLength"
+            }
+            // The first decoder call consumes the condition + initial/prompt tokens. Every later
+            // generated token consumes one more cache position. Restrict generation up front so a
+            // low-memory profile ends the chunk cleanly instead of attempting position N+1.
+            val cacheGenerationBudget = 1 + (maxCacheLength - firstQueryLength)
+            val modelGenerationBudget = (MAX_SEQUENCE_TOKENS - prompt.size).coerceAtLeast(1)
+            val generationBudget = min(cacheGenerationBudget, modelGenerationBudget)
+            var emittedEos = false
 
             while (generated < generationBudget) {
                 currentCoroutineContext().ensureActive()
@@ -153,9 +168,7 @@ class MuScriptorEngine(
                 val prefixLength = if (generated == 0) conditionLength else 0
                 val queryLength = prefixLength + inputIds.size
                 val totalLength = pastLength + queryLength
-                check(totalLength <= maxCacheLength) {
-                    "Decoder cache exhausted at $totalLength/$maxCacheLength positions"
-                }
+                if (totalLength > maxCacheLength) break
 
                 val inputIdTensor = longTensor(inputIds, longArrayOf(1, inputIds.size.toLong()))
                 val positions = LongArray(queryLength) { index -> (pastLength + index).toLong() }
@@ -186,12 +199,19 @@ class MuScriptorEngine(
                 }
 
                 pastLength = totalLength
-                if (token == EOS_TOKEN_ID) break
+                if (token == EOS_TOKEN_ID) {
+                    emittedEos = true
+                    break
+                }
                 onToken(token, lastMillis)
                 generated += 1
                 inputIds = longArrayOf(token.toLong())
             }
-            return ChunkResult(0, lastMillis)
+            return ChunkResult(
+                tokensNotStreamed = 0,
+                lastTokenMillis = lastMillis,
+                hitCacheLimit = !emittedEos && generationBudget == cacheGenerationBudget,
+            )
         } finally {
             conditionResult?.close()
             melTensor.close()
@@ -262,7 +282,11 @@ class MuScriptorEngine(
         options.close()
     }
 
-    private data class ChunkResult(val tokensNotStreamed: Int, val lastTokenMillis: Double)
+    private data class ChunkResult(
+        val tokensNotStreamed: Int,
+        val lastTokenMillis: Double,
+        val hitCacheLimit: Boolean,
+    )
 
     private class SharedCache(
         environment: OrtEnvironment,
