@@ -1,6 +1,7 @@
 package dev.cardrhyme.muscriptormobile
 
 import android.os.Build
+import ai.onnxruntime.OnnxJavaType
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
@@ -17,6 +18,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.EnumSet
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
@@ -24,7 +26,9 @@ import kotlin.math.min
 
 class MuScriptorEngine(
     private val modelDir: File,
+    private val decoderFile: File = File(modelDir, "decoder.onnx"),
     private val maxCacheLength: Int = 1024,
+    private val cachePrecision: CachePrecision = CachePrecision.FP32,
     private val requestedBackend: ComputeBackend = ComputeBackend.CPU,
     private val threadCount: Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 8),
 ) : Closeable {
@@ -62,6 +66,12 @@ class MuScriptorEngine(
         }
     }
 
+    init {
+        require(maxCacheLength in 1..CachePrecision.MODEL_MAX_CACHE_LENGTH) {
+            "Cache length must be between 1 and ${CachePrecision.MODEL_MAX_CACHE_LENGTH}"
+        }
+    }
+
     private val environment = OrtEnvironment.getEnvironment()
     private val sessions = createSessionsWithFallback(requestedBackend)
     private val conditionerOptions = sessions.conditionerOptions
@@ -70,9 +80,17 @@ class MuScriptorEngine(
     private val decoder = sessions.decoder
 
     val activeBackend: ComputeBackend = sessions.activeBackend
-    val backendStatus: String = sessions.status
+    val backendStatus: String = buildString {
+        append(sessions.status)
+        append(" • ")
+        append(cachePrecision.shortName)
+        append(" KV • ")
+        append(maxCacheLength)
+        append(" positions • ")
+        append(String.format(Locale.US, "%.1f MiB", cachePrecision.actualMemoryMiB(maxCacheLength)))
+    }
 
-    private val cache = SharedCache(environment, maxCacheLength)
+    private val cache = SharedCache(environment, maxCacheLength, cachePrecision)
     private val emptyCondition = floatTensor(FloatArray(0), longArrayOf(1, 0, MODEL_DIM.toLong()))
 
     /**
@@ -539,7 +557,7 @@ class MuScriptorEngine(
                 conditionerSessionOptions,
             )
             decoderSession = environment.createSession(
-                File(modelDir, "decoder.onnx").absolutePath,
+                decoderFile.absolutePath,
                 decoderSessionOptions,
             )
             val status = fallbackStatus ?: when {
@@ -549,7 +567,7 @@ class MuScriptorEngine(
                 backend.conditionerUsesNnapi || backend.decoderUsesNnapi -> buildString {
                     append("NNAPI accelerator active • Android chooses GPU/NPU")
                     if (backend.allowFp16) append(" • FP16 relaxation enabled")
-                    append(" • unsupported nodes use ORT CPU")
+                    append(" • unsupported cache adapter nodes may fall back to ORT CPU")
                 }
                 else -> "CPU backend active"
             }
@@ -582,7 +600,10 @@ class MuScriptorEngine(
             require(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 "NNAPI requires Android 8.1 or newer"
             }
-            val flags = EnumSet.of(NNAPIFlags.CPU_DISABLED)
+            // Do not disable CPU fallback: FP16/INT8/packed-INT4 cache boundary adapters contain
+            // operations which some Android NNAPI drivers cannot execute. Supported model regions
+            // still run on the accelerator while unsupported adapter nodes remain on ORT CPU.
+            val flags = EnumSet.noneOf(NNAPIFlags::class.java)
             if (allowFp16) flags.add(NNAPIFlags.USE_FP16)
             addNnapi(flags)
         }
@@ -635,29 +656,82 @@ class MuScriptorEngine(
     private class SharedCache(
         environment: OrtEnvironment,
         maxCacheLength: Int,
+        precision: CachePrecision,
     ) : Closeable {
         private val tensors = ArrayList<OnnxTensor>(NUM_LAYERS * 2)
         val inputs = LinkedHashMap<String, OnnxTensor>(NUM_LAYERS * 2)
         val outputs = LinkedHashMap<String, OnnxTensor>(NUM_LAYERS * 2)
 
         init {
-            val elements = NUM_HEADS * maxCacheLength * HEAD_DIM
+            val storedHeadDim = precision.packedHeadDim
+            val elements = NUM_HEADS * maxCacheLength * storedHeadDim
+            val shape = longArrayOf(
+                1,
+                NUM_HEADS.toLong(),
+                maxCacheLength.toLong(),
+                storedHeadDim.toLong(),
+            )
+
             repeat(NUM_LAYERS) { layer ->
                 for (kind in listOf("key", "value")) {
-                    val buffer: FloatBuffer = ByteBuffer
-                        .allocateDirect(elements * Float.SIZE_BYTES)
-                        .order(ByteOrder.nativeOrder())
-                        .asFloatBuffer()
-                    val tensor = OnnxTensor.createTensor(
-                        environment,
-                        buffer,
-                        longArrayOf(1, NUM_HEADS.toLong(), maxCacheLength.toLong(), HEAD_DIM.toLong()),
-                    )
+                    val tensor = createTensor(environment, precision, elements, shape)
                     tensors += tensor
                     inputs["past_$kind.$layer"] = tensor
                     outputs["present_$kind.$layer"] = tensor
                 }
             }
+        }
+
+        private fun createTensor(
+            environment: OrtEnvironment,
+            precision: CachePrecision,
+            elements: Int,
+            shape: LongArray,
+        ): OnnxTensor = when (precision.storage) {
+            CachePrecision.Storage.FP32 -> {
+                val buffer: FloatBuffer = ByteBuffer
+                    .allocateDirect(elements * Float.SIZE_BYTES)
+                    .order(ByteOrder.nativeOrder())
+                    .asFloatBuffer()
+                OnnxTensor.createTensor(environment, buffer, shape)
+            }
+            CachePrecision.Storage.FP16 -> {
+                val buffer = ByteBuffer
+                    .allocateDirect(elements * Short.SIZE_BYTES)
+                    .order(ByteOrder.nativeOrder())
+                    .asShortBuffer()
+                OnnxTensor.createTensor(environment, buffer, shape, OnnxJavaType.FLOAT16)
+            }
+            CachePrecision.Storage.BF16 -> {
+                val buffer = ByteBuffer
+                    .allocateDirect(elements * Short.SIZE_BYTES)
+                    .order(ByteOrder.nativeOrder())
+                    .asShortBuffer()
+                OnnxTensor.createTensor(environment, buffer, shape, OnnxJavaType.BFLOAT16)
+            }
+            CachePrecision.Storage.INT8 -> {
+                val buffer = ByteBuffer
+                    .allocateDirect(elements)
+                    .order(ByteOrder.nativeOrder())
+                OnnxTensor.createTensor(environment, buffer, shape, OnnxJavaType.INT8)
+            }
+            CachePrecision.Storage.PACKED_UINT4 -> {
+                val buffer = ByteBuffer
+                    .allocateDirect(elements)
+                    .order(ByteOrder.nativeOrder())
+                fillPackedZero(buffer)
+                OnnxTensor.createTensor(environment, buffer, shape, OnnxJavaType.UINT8)
+            }
+        }
+
+        private fun fillPackedZero(buffer: ByteBuffer) {
+            // Packed signed INT4 uses an unsigned zero-point of 8 in each nibble. 0x88 therefore
+            // represents two exact zeros; a newly allocated all-zero byte buffer would decode as
+            // the most negative value and corrupt the first decoder pass.
+            val block = ByteArray(min(64 * 1024, buffer.capacity())) { 0x88.toByte() }
+            while (buffer.remaining() >= block.size) buffer.put(block)
+            while (buffer.hasRemaining()) buffer.put(0x88.toByte())
+            buffer.position(0)
         }
 
         override fun close() {
