@@ -1,9 +1,11 @@
 package dev.cardrhyme.muscriptormobile
 
+import android.os.Build
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
+import ai.onnxruntime.providers.NNAPIFlags
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.io.Closeable
@@ -11,12 +13,14 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.util.EnumSet
 import kotlin.math.ceil
 import kotlin.math.min
 
 class MuScriptorEngine(
     private val modelDir: File,
     private val maxCacheLength: Int = 1024,
+    private val requestedBackend: ComputeBackend = ComputeBackend.CPU,
     private val threadCount: Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 8),
 ) : Closeable {
     data class Progress(
@@ -33,20 +37,23 @@ class MuScriptorEngine(
         val generatedTokens: Int,
     )
 
+    private data class SessionBundle(
+        val options: OrtSession.SessionOptions,
+        val conditioner: OrtSession,
+        val decoder: OrtSession,
+        val activeBackend: ComputeBackend,
+        val status: String,
+    )
+
     private val environment = OrtEnvironment.getEnvironment()
-    private val options = OrtSession.SessionOptions().apply {
-        setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-        setIntraOpNumThreads(threadCount)
-        setInterOpNumThreads(1)
-    }
-    private val conditioner = environment.createSession(
-        File(modelDir, "conditioner.onnx").absolutePath,
-        options,
-    )
-    private val decoder = environment.createSession(
-        File(modelDir, "decoder.onnx").absolutePath,
-        options,
-    )
+    private val sessions = createSessionsWithFallback(requestedBackend)
+    private val options = sessions.options
+    private val conditioner = sessions.conditioner
+    private val decoder = sessions.decoder
+
+    val activeBackend: ComputeBackend = sessions.activeBackend
+    val backendStatus: String = sessions.status
+
     private val cache = SharedCache(environment, maxCacheLength)
     private val emptyCondition = floatTensor(FloatArray(0), longArrayOf(1, 0, MODEL_DIM.toLong()))
 
@@ -154,9 +161,6 @@ class MuScriptorEngine(
             require(firstQueryLength <= maxCacheLength) {
                 "Cache profile too small: first pass needs $firstQueryLength positions, has $maxCacheLength"
             }
-            // The first decoder call consumes the condition + initial/prompt tokens. Every later
-            // generated token consumes one more cache position. Restrict generation up front so a
-            // low-memory profile ends the chunk cleanly instead of attempting position N+1.
             val cacheGenerationBudget = 1 + (maxCacheLength - firstQueryLength)
             val modelGenerationBudget = (MAX_SEQUENCE_TOKENS - prompt.size).coerceAtLeast(1)
             val generationBudget = min(cacheGenerationBudget, modelGenerationBudget)
@@ -249,6 +253,76 @@ class MuScriptorEngine(
         tokens += TIE_TOKEN_ID
         return tokens.toIntArray()
     }
+
+    private fun createSessionsWithFallback(backend: ComputeBackend): SessionBundle {
+        if (!backend.useNnapi) return createSessions(ComputeBackend.CPU, null)
+        return try {
+            createSessions(backend, null)
+        } catch (nnapiError: Throwable) {
+            createSessions(
+                ComputeBackend.CPU,
+                "NNAPI could not initialize (${compactMessage(nnapiError)}); using CPU",
+            )
+        }
+    }
+
+    private fun createSessions(
+        backend: ComputeBackend,
+        fallbackStatus: String?,
+    ): SessionBundle {
+        val sessionOptions = OrtSession.SessionOptions().apply {
+            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            setInterOpNumThreads(1)
+            setIntraOpNumThreads(
+                if (backend.useNnapi) threadCount.coerceAtMost(4) else threadCount,
+            )
+            if (backend.useNnapi) {
+                require(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                    "NNAPI requires Android 8.1 or newer"
+                }
+                val flags = EnumSet.of(NNAPIFlags.CPU_DISABLED)
+                if (backend.allowFp16) flags.add(NNAPIFlags.USE_FP16)
+                addNnapi(flags)
+            }
+        }
+
+        var conditionerSession: OrtSession? = null
+        try {
+            conditionerSession = environment.createSession(
+                File(modelDir, "conditioner.onnx").absolutePath,
+                sessionOptions,
+            )
+            val decoderSession = environment.createSession(
+                File(modelDir, "decoder.onnx").absolutePath,
+                sessionOptions,
+            )
+            val status = fallbackStatus ?: if (backend.useNnapi) {
+                buildString {
+                    append("NNAPI hybrid active")
+                    if (backend.allowFp16) append(" • FP16 relaxation enabled")
+                    append(" • unsupported nodes use ORT CPU")
+                }
+            } else {
+                "CPU backend active"
+            }
+            return SessionBundle(
+                options = sessionOptions,
+                conditioner = conditionerSession,
+                decoder = decoderSession,
+                activeBackend = backend,
+                status = status,
+            )
+        } catch (error: Throwable) {
+            runCatching { conditionerSession?.close() }
+            runCatching { sessionOptions.close() }
+            throw error
+        }
+    }
+
+    private fun compactMessage(error: Throwable): String =
+        (error.message ?: error.javaClass.simpleName)
+            .replace('\n', ' ')
+            .take(120)
 
     private fun floatTensor(values: FloatArray, shape: LongArray): OnnxTensor {
         val buffer = direct(values.size * Float.SIZE_BYTES).asFloatBuffer()

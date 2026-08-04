@@ -1,6 +1,6 @@
 package dev.cardrhyme.muscriptormobile
 
-/** Runtime backend requested for ONNX Runtime sessions. */
+/** Runtime backend requested for the ONNX Runtime conditioner and decoder sessions. */
 enum class ComputeBackend(
     val displayName: String,
     val shortName: String,
@@ -14,13 +14,13 @@ enum class ComputeBackend(
         allowFp16 = false,
     ),
     NNAPI(
-        displayName = "NPU / NNAPI • experimental",
+        displayName = "NPU / NNAPI hybrid • experimental",
         shortName = "NNAPI",
         useNnapi = true,
         allowFp16 = false,
     ),
     NNAPI_FP16(
-        displayName = "NPU / NNAPI + FP16 • fastest experiment",
+        displayName = "NPU / NNAPI hybrid + FP16 • speed test",
         shortName = "NNAPI FP16",
         useNnapi = true,
         allowFp16 = true,
