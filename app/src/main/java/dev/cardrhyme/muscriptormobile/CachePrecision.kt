@@ -97,14 +97,14 @@ enum class CachePrecision(
         get() = ELEMENTS_PER_POSITION * bytesNumerator / bytesDenominator
 
     fun cacheLengthForBudget(memoryMiB: Int): Int {
-        val budgetBytes = memoryMiB.toLong() * MIB
+        val budgetBytes = memoryMiB.toLong() * MIB_BYTES
         return floor(budgetBytes.toDouble() / bytesPerPosition)
             .toInt()
             .coerceIn(1, MODEL_MAX_CACHE_LENGTH)
     }
 
     fun actualMemoryMiB(cacheLength: Int): Double =
-        cacheLength.toDouble() * bytesPerPosition / MIB
+        cacheLength.toDouble() * bytesPerPosition / MIB_BYTES.toDouble()
 
     fun estimatedGenerationPositions(cacheLength: Int): Int =
         (cacheLength - ESTIMATED_CONDITION_POSITIONS - 1).coerceAtLeast(0)
@@ -117,8 +117,9 @@ enum class CachePrecision(
         private const val NUM_LAYERS = 24L
         private const val NUM_KV_TENSORS_PER_LAYER = 2L
         private const val NUM_HEADS = 16L
+        private const val HEAD_DIM_LONG = 64L
         private const val ELEMENTS_PER_POSITION =
-            NUM_LAYERS * NUM_KV_TENSORS_PER_LAYER * NUM_HEADS * HEAD_DIM
-        private const val MIB = 1024.0 * 1024.0
+            NUM_LAYERS * NUM_KV_TENSORS_PER_LAYER * NUM_HEADS * HEAD_DIM_LONG
+        private const val MIB_BYTES = 1024L * 1024L
     }
 }
