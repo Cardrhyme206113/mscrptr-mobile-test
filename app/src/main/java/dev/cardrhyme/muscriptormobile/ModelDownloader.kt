@@ -7,6 +7,7 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -111,7 +112,7 @@ class ModelDownloader(private val context: Context) {
         }
 
         BufferedInputStream(connection.inputStream, 1 shl 20).use { input ->
-            BufferedOutputStream(partial.outputStream(append = existing > 0), 1 shl 20).use { output ->
+            BufferedOutputStream(FileOutputStream(partial, existing > 0), 1 shl 20).use { output ->
                 val buffer = ByteArray(1 shl 20)
                 var written = existing
                 onBytes(written)
