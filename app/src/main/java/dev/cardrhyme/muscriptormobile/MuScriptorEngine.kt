@@ -17,7 +17,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.EnumSet
+import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.max
 import kotlin.math.min
 
 class MuScriptorEngine(
@@ -31,6 +33,7 @@ class MuScriptorEngine(
         val totalChunks: Int,
         val generatedTokens: Int,
         val lastTokenMillis: Double,
+        val finalizedSeconds: Double,
         val message: String,
     )
 
@@ -72,6 +75,12 @@ class MuScriptorEngine(
     private val cache = SharedCache(environment, maxCacheLength)
     private val emptyCondition = floatTensor(FloatArray(0), longArrayOf(1, 0, MODEL_DIM.toLong()))
 
+    /**
+     * The ONNX conditioner still receives its native five-second input, but windows now advance by
+     * four seconds. Each neighboring pair therefore shares one second of real audio context. Only
+     * the stable center ownership region is committed, removing the artificial hard cut at 5, 10,
+     * 15… seconds without increasing the conditioner tensor shape.
+     */
     suspend fun transcribe(
         samples16k: FloatArray,
         onLiveEvent: (LiveNoteEvent) -> Unit,
@@ -79,45 +88,54 @@ class MuScriptorEngine(
     ): Result = coroutineScope {
         require(samples16k.isNotEmpty()) { "Audio contains no samples" }
         val duration = samples16k.size.toDouble() / MelSpectrogram.SAMPLE_RATE
-        val totalChunks = ceil(samples16k.size.toDouble() / MelSpectrogram.SEGMENT_SAMPLES).toInt()
-        val tokenDecoder = TokenDecoder(onLiveEvent = onLiveEvent)
+        val totalWindows = windowCount(samples16k.size)
+        val committedNotes = ArrayList<MidiNote>()
         var generatedTotal = 0
+        var nextLiveId = 0L
+        var finalizedFrontier = 0.0
 
         var prepared: PreparedCondition? = prepareCondition(samples16k, 0)
         try {
-            for (chunkIndex in 0 until totalChunks) {
+            for (windowIndex in 0 until totalWindows) {
                 currentCoroutineContext().ensureActive()
-                val seek = chunkIndex * CHUNK_SECONDS
-                val nextSeek = if (chunkIndex + 1 < totalChunks) {
-                    (chunkIndex + 1) * CHUNK_SECONDS
-                } else {
-                    null
-                }
-                tokenDecoder.startChunk(seek, nextSeek)
 
-                val prompt = if (chunkIndex == 0) IntArray(0) else tiePrompt(tokenDecoder.openKeys())
-                prompt.forEach(tokenDecoder::feed)
+                val windowStart = windowIndex * WINDOW_HOP_SECONDS
+                val windowEnd = min(duration, windowStart + WINDOW_SECONDS)
+                val safeStart = if (windowIndex == 0) {
+                    0.0
+                } else {
+                    windowStart + HALF_OVERLAP_SECONDS
+                }
+                val safeEnd = if (windowIndex == totalWindows - 1) {
+                    duration
+                } else {
+                    min(duration, windowStart + WINDOW_HOP_SECONDS + HALF_OVERLAP_SECONDS)
+                }
+
+                // Every overlapped window is decoded independently. Reusing the old decoder state
+                // would rewind its musical clock by one second and corrupt ties/open notes.
+                val windowDecoder = TokenDecoder()
+                windowDecoder.startChunk(windowStart, windowEnd)
+                val prompt = IntArray(0)
 
                 onProgress(
                     Progress(
-                        completedChunks = chunkIndex,
-                        totalChunks = totalChunks,
+                        completedChunks = windowIndex,
+                        totalChunks = totalWindows,
                         generatedTokens = generatedTotal,
                         lastTokenMillis = 0.0,
-                        message = if (activeBackend.pipelineConditioner && chunkIndex + 1 < totalChunks) {
-                            "Streaming chunk ${chunkIndex + 1}/$totalChunks • preparing next chunk in parallel"
+                        finalizedSeconds = finalizedFrontier,
+                        message = if (activeBackend.pipelineConditioner && windowIndex + 1 < totalWindows) {
+                            "Window ${windowIndex + 1}/$totalWindows • 1 s overlap • preparing next window in parallel"
                         } else {
-                            "Preparing chunk ${chunkIndex + 1}/$totalChunks"
+                            "Preparing window ${windowIndex + 1}/$totalWindows • 1 s overlap"
                         },
                     ),
                 )
 
-                // The conditioner is independent of the decoder's tie prompt. In parallel mode we
-                // therefore prepare chunk N+1 on NNAPI while chunk N autoregressively decodes on
-                // the optimized CPU EP. This is true overlap across separate ORT sessions.
-                val nextPrepared = if (activeBackend.pipelineConditioner && chunkIndex + 1 < totalChunks) {
+                val nextPrepared = if (activeBackend.pipelineConditioner && windowIndex + 1 < totalWindows) {
                     async(Dispatchers.Default) {
-                        prepareCondition(samples16k, chunkIndex + 1)
+                        prepareCondition(samples16k, windowIndex + 1)
                     }
                 } else {
                     null
@@ -125,12 +143,12 @@ class MuScriptorEngine(
 
                 val currentPrepared = checkNotNull(prepared)
                 prepared = null
-                val chunkGenerated = try {
+                val windowGenerated = try {
                     runDecoder(
                         prepared = currentPrepared,
                         prompt = prompt,
                         onToken = { token, tokenMillis ->
-                            tokenDecoder.feed(token)
+                            windowDecoder.feed(token)
                             generatedTotal += 1
                             if (
                                 generatedTotal % PROGRESS_TOKEN_INTERVAL == 0 ||
@@ -138,11 +156,12 @@ class MuScriptorEngine(
                             ) {
                                 onProgress(
                                     Progress(
-                                        completedChunks = chunkIndex,
-                                        totalChunks = totalChunks,
+                                        completedChunks = windowIndex,
+                                        totalChunks = totalWindows,
                                         generatedTokens = generatedTotal,
                                         lastTokenMillis = tokenMillis,
-                                        message = "Streaming chunk ${chunkIndex + 1}/$totalChunks",
+                                        finalizedSeconds = finalizedFrontier,
+                                        message = "Streaming window ${windowIndex + 1}/$totalWindows • overlapped",
                                     ),
                                 )
                             }
@@ -152,42 +171,214 @@ class MuScriptorEngine(
                     currentPrepared.close()
                 }
 
-                generatedTotal += chunkGenerated.tokensNotStreamed
+                generatedTotal += windowGenerated.tokensNotStreamed
+                val candidates = windowDecoder.finish(windowEnd)
+                val newlyCommitted = commitStableRegion(
+                    candidates = candidates,
+                    existing = committedNotes,
+                    safeStart = safeStart,
+                    safeEnd = safeEnd,
+                    audioDuration = duration,
+                    isLastWindow = windowIndex == totalWindows - 1,
+                )
+                for (note in newlyCommitted) {
+                    committedNotes += note
+                    val id = nextLiveId++
+                    onLiveEvent(
+                        LiveNoteEvent.Started(
+                            id = id,
+                            program = note.program,
+                            pitch = note.pitch,
+                            onsetSeconds = note.onsetSeconds,
+                            isDrum = note.isDrum,
+                        ),
+                    )
+                    onLiveEvent(LiveNoteEvent.Ended(id, note))
+                }
+
+                finalizedFrontier = max(finalizedFrontier, safeEnd)
                 onProgress(
                     Progress(
-                        completedChunks = chunkIndex + 1,
-                        totalChunks = totalChunks,
+                        completedChunks = windowIndex + 1,
+                        totalChunks = totalWindows,
                         generatedTokens = generatedTotal,
-                        lastTokenMillis = chunkGenerated.lastTokenMillis,
-                        message = if (chunkGenerated.hitCacheLimit) {
-                            "Chunk ${chunkIndex + 1}/$totalChunks complete • cache limit reached"
+                        lastTokenMillis = windowGenerated.lastTokenMillis,
+                        finalizedSeconds = finalizedFrontier,
+                        message = if (windowGenerated.hitCacheLimit) {
+                            "Window ${windowIndex + 1}/$totalWindows complete • cache limit reached"
                         } else {
-                            "Chunk ${chunkIndex + 1}/$totalChunks complete"
+                            "Window ${windowIndex + 1}/$totalWindows complete • center committed"
                         },
                     ),
                 )
 
                 prepared = when {
-                    chunkIndex + 1 >= totalChunks -> null
+                    windowIndex + 1 >= totalWindows -> null
                     nextPrepared != null -> nextPrepared.await()
-                    else -> prepareCondition(samples16k, chunkIndex + 1)
+                    else -> prepareCondition(samples16k, windowIndex + 1)
                 }
             }
         } finally {
             prepared?.close()
         }
 
-        val notes = tokenDecoder.finish(duration)
+        val notes = mergeAdjacentForExport(committedNotes)
         Result(notes, MidiWriter.write(notes), generatedTotal)
+    }
+
+    private fun windowCount(sampleCount: Int): Int {
+        if (sampleCount <= MelSpectrogram.SEGMENT_SAMPLES) return 1
+        val remainingAfterFirst = sampleCount - MelSpectrogram.SEGMENT_SAMPLES
+        return 1 + ceil(remainingAfterFirst.toDouble() / WINDOW_HOP_SAMPLES).toInt()
+    }
+
+    /**
+     * A note is primarily owned by the window whose stable center contains its onset. If the prior
+     * window missed a sustained note entirely, a center-crossing continuation is admitted at the
+     * safe boundary. Nearby duplicates from onset jitter are discarded.
+     */
+    private fun commitStableRegion(
+        candidates: List<MidiNote>,
+        existing: List<MidiNote>,
+        safeStart: Double,
+        safeEnd: Double,
+        audioDuration: Double,
+        isLastWindow: Boolean,
+    ): List<MidiNote> {
+        val committed = ArrayList<MidiNote>()
+        val ordered = candidates.sortedBy { it.onsetSeconds }
+
+        for (raw in ordered) {
+            if (!raw.onsetSeconds.isFinite() || !raw.offsetSeconds.isFinite()) continue
+            if (raw.pitch !in 0..127 || raw.program !in 0..128) continue
+
+            val onset = raw.onsetSeconds.coerceIn(0.0, audioDuration)
+            val offset = raw.offsetSeconds.coerceIn(onset, audioDuration)
+            if (offset - onset < MIN_ACCEPTED_NOTE_SECONDS) continue
+
+            val ownsOnset = onset + TIME_EPSILON >= safeStart &&
+                if (isLastWindow) onset <= safeEnd + TIME_EPSILON else onset < safeEnd - TIME_EPSILON
+
+            var candidate: MidiNote? = if (ownsOnset) {
+                raw.copy(onsetSeconds = onset, offsetSeconds = offset)
+            } else {
+                null
+            }
+
+            if (
+                candidate == null &&
+                !raw.isDrum &&
+                onset < safeStart &&
+                offset > safeStart + MIN_CONTINUATION_SECONDS
+            ) {
+                val covering = findCovering(existing, committed, raw, safeStart)
+                candidate = when {
+                    covering == null -> raw.copy(
+                        onsetSeconds = safeStart,
+                        offsetSeconds = offset,
+                    )
+                    offset > covering.offsetSeconds + MIN_CONTINUATION_SECONDS -> raw.copy(
+                        onsetSeconds = max(safeStart, covering.offsetSeconds),
+                        offsetSeconds = offset,
+                    )
+                    else -> null
+                }
+            }
+
+            val note = candidate ?: continue
+            if (note.offsetSeconds - note.onsetSeconds < MIN_ACCEPTED_NOTE_SECONDS) continue
+            if (isNearDuplicate(existing, committed, note)) continue
+            committed += note
+        }
+        return committed
+    }
+
+    private fun findCovering(
+        existing: List<MidiNote>,
+        current: List<MidiNote>,
+        candidate: MidiNote,
+        time: Double,
+    ): MidiNote? {
+        fun matches(note: MidiNote): Boolean =
+            !note.isDrum &&
+                note.program == candidate.program &&
+                note.pitch == candidate.pitch &&
+                note.onsetSeconds <= time + TIME_EPSILON &&
+                note.offsetSeconds >= time - TIME_EPSILON
+
+        for (index in current.indices.reversed()) {
+            val note = current[index]
+            if (matches(note)) return note
+        }
+        for (index in existing.indices.reversed()) {
+            val note = existing[index]
+            if (matches(note)) return note
+            if (note.onsetSeconds < time - WINDOW_SECONDS - 0.5) break
+        }
+        return null
+    }
+
+    private fun isNearDuplicate(
+        existing: List<MidiNote>,
+        current: List<MidiNote>,
+        candidate: MidiNote,
+    ): Boolean {
+        fun duplicate(note: MidiNote): Boolean =
+            note.program == candidate.program &&
+                note.pitch == candidate.pitch &&
+                note.isDrum == candidate.isDrum &&
+                abs(note.onsetSeconds - candidate.onsetSeconds) <= DEDUPE_ONSET_SECONDS
+
+        for (index in current.indices.reversed()) {
+            val note = current[index]
+            if (note.onsetSeconds < candidate.onsetSeconds - DEDUPE_LOOKBACK_SECONDS) break
+            if (duplicate(note)) return true
+        }
+        for (index in existing.indices.reversed()) {
+            val note = existing[index]
+            if (note.onsetSeconds < candidate.onsetSeconds - DEDUPE_LOOKBACK_SECONDS) break
+            if (duplicate(note)) return true
+        }
+        return false
+    }
+
+    private fun mergeAdjacentForExport(source: List<MidiNote>): List<MidiNote> {
+        val sorted = source.sortedWith(
+            compareBy<MidiNote> { it.onsetSeconds }
+                .thenBy { it.program }
+                .thenBy { it.pitch },
+        )
+        val result = ArrayList<MidiNote>(sorted.size)
+        val lastIndexByKey = HashMap<Triple<Int, Int, Boolean>, Int>()
+
+        for (note in sorted) {
+            val key = Triple(note.program, note.pitch, note.isDrum)
+            val previousIndex = lastIndexByKey[key]
+            val previous = previousIndex?.let(result::get)
+            if (
+                previousIndex != null &&
+                previous != null &&
+                !note.isDrum &&
+                note.onsetSeconds <= previous.offsetSeconds + EXPORT_MERGE_GAP_SECONDS
+            ) {
+                result[previousIndex] = previous.copy(
+                    offsetSeconds = max(previous.offsetSeconds, note.offsetSeconds),
+                )
+            } else {
+                lastIndexByKey[key] = result.size
+                result += note
+            }
+        }
+        return result
     }
 
     private fun prepareCondition(
         samples16k: FloatArray,
-        chunkIndex: Int,
+        windowIndex: Int,
     ): PreparedCondition {
         val mel = MelSpectrogram.compute(
             samples16k,
-            chunkIndex * MelSpectrogram.SEGMENT_SAMPLES,
+            windowIndex * WINDOW_HOP_SAMPLES,
         )
         val melTensor = floatTensor(
             mel,
@@ -310,20 +501,6 @@ class MuScriptorEngine(
         }
         check(bestValue > -Float.MAX_VALUE) { "Decoder produced no finite logits" }
         return bestIndex
-    }
-
-    private fun tiePrompt(openKeys: List<Pair<Int, Int>>): IntArray {
-        val tokens = ArrayList<Int>(openKeys.size * 2 + 1)
-        var previousProgram: Int? = null
-        for ((program, pitch) in openKeys) {
-            if (program != previousProgram) {
-                tokens += PROGRAM_TOKEN_START + program
-                previousProgram = program
-            }
-            tokens += PITCH_TOKEN_START + pitch
-        }
-        tokens += TIE_TOKEN_ID
-        return tokens.toIntArray()
     }
 
     private fun createSessionsWithFallback(backend: ComputeBackend): SessionBundle {
@@ -497,10 +674,19 @@ class MuScriptorEngine(
         private const val EOS_TOKEN_ID = 1
         private const val FIRST_RESERVED_TOKEN_ID = 1393
         private const val MAX_SEQUENCE_TOKENS = 2000
-        private const val PITCH_TOKEN_START = 1004
-        private const val TIE_TOKEN_ID = 1134
-        private const val PROGRAM_TOKEN_START = 1135
-        private const val CHUNK_SECONDS = 5.0
+
+        private const val WINDOW_SECONDS = 5.0
+        private const val WINDOW_HOP_SECONDS = 4.0
+        private const val OVERLAP_SECONDS = WINDOW_SECONDS - WINDOW_HOP_SECONDS
+        private const val HALF_OVERLAP_SECONDS = OVERLAP_SECONDS / 2.0
+        private const val WINDOW_HOP_SAMPLES = 64_000
+
         private const val PROGRESS_TOKEN_INTERVAL = 8
+        private const val TIME_EPSILON = 0.002
+        private const val MIN_ACCEPTED_NOTE_SECONDS = 0.01
+        private const val MIN_CONTINUATION_SECONDS = 0.04
+        private const val DEDUPE_ONSET_SECONDS = 0.055
+        private const val DEDUPE_LOOKBACK_SECONDS = 0.12
+        private const val EXPORT_MERGE_GAP_SECONDS = 0.055
     }
 }
