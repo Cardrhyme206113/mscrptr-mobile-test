@@ -5,6 +5,8 @@ on:
   push:
     paths:
       - 'app/**'
+      - 'tools/**'
+      - 'signing/**'
       - '*.gradle.kts'
       - 'gradle.properties'
       - 'settings.gradle.kts'
@@ -12,6 +14,8 @@ on:
   pull_request:
     paths:
       - 'app/**'
+      - 'tools/**'
+      - 'signing/**'
       - '*.gradle.kts'
       - 'gradle.properties'
       - 'settings.gradle.kts'
@@ -32,9 +36,34 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+
+      - name: Generate and test cache decoder variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet 'onnx>=1.17,<2' 'onnxruntime>=1.20,<2' numpy
+          mkdir -p .cache/muscriptor app/src/main/assets/cache_decoders
+          curl -L --fail --retry 4 --retry-delay 2 \
+            -o .cache/muscriptor/decoder.onnx \
+            'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx?download=true'
+          curl -L --fail --retry 4 --retry-delay 2 \
+            -o .cache/muscriptor/decoder.onnx.data \
+            'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx.data?download=true'
+          python tools/generate_cache_variants.py \
+            --decoder .cache/muscriptor/decoder.onnx \
+            --output app/src/main/assets/cache_decoders
+          python tools/smoke_test_cache_variants.py \
+            --variants app/src/main/assets/cache_decoders \
+            --external-data .cache/muscriptor/decoder.onnx.data \
+            --max-cache 512
+          ls -lh app/src/main/assets/cache_decoders
 
       - name: Build and test
         id: build
