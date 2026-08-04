@@ -28,25 +28,25 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare release asset
-        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.2.1.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.2.2.apk
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.2.1 --cleanup-tag --yes || true
-          gh release create v0.2.1 \
-            MuScriptor-Mobile-v0.2.1.apk \
+          gh release delete v0.2.2 --cleanup-tag --yes || true
+          gh release create v0.2.2 \
+            MuScriptor-Mobile-v0.2.2.apk \
             --target "$GITHUB_SHA" \
-            --title "MuScriptor Mobile v0.2.1" \
-            --notes "Critical live MIDI audio fix. The preview synth previously deleted every melodic note on the first sample because its attack envelope intentionally begins at zero amplitude. Melodic voices now survive the attack and are removed only after note release; drums still expire after natural decay. Also validates MIDI AudioTrack initialization, clamps incoming MIDI pitch/program values, and increases synth output gain so the default 80% MIDI / 20% song mix is clearly audible. Existing downloaded model files are reused."
+            --title "MuScriptor Mobile v0.2.2" \
+            --notes "MIDI synchronization and performance update. Replaces the expensive per-sample trigonometric synth with a lightweight command-driven wavetable renderer using mono PCM16, stateful envelopes, bounded 48-voice polyphony, and a lock-free command queue. Only finalized notes are now sent to the synth, preventing provisional/stale inference events from producing random sounds that are absent from the exported MIDI. Playback compensates for AudioTrack queue latency against the original-song clock. Preview state updates are throttled and the piano roll draws only visible time buckets, so UI cost no longer grows with song length. Existing downloaded model files are reused."
 
       - name: Persist release link
         run: |
           mkdir -p ci
-          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.2.1' > ci/release-url.txt
+          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.2.2' > ci/release-url.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add ci/release-url.txt
-          git commit -m "docs: record v0.2.1 release URL" || exit 0
+          git commit -m "docs: record v0.2.2 release URL" || exit 0
           git push
