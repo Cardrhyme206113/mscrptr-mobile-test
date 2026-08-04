@@ -2,13 +2,7 @@ package dev.cardrhyme.muscriptormobile
 
 import kotlin.math.floor
 
-/**
- * Persistent KV-cache storage formats.
- *
- * FP32 uses the original decoder graph. The other formats use tiny graph adapters generated at
- * build time. They dequantize one layer's cache for attention and quantize it again at the output,
- * while the long-lived shared cache remains in the selected compact representation.
- */
+/** Persistent KV-cache storage formats. */
 enum class CachePrecision(
     val displayName: String,
     val shortName: String,
@@ -17,69 +11,87 @@ enum class CachePrecision(
     val assetFileName: String?,
     val storage: Storage,
     val qualityNote: String,
+    val usesFullCacheBoundaryConversion: Boolean,
 ) {
     FP32(
-        displayName = "FP32 · exact",
+        displayName = "FP32 · exact / baseline",
         shortName = "FP32",
         bytesNumerator = 4,
         bytesDenominator = 1,
         assetFileName = null,
         storage = Storage.FP32,
-        qualityNote = "Original cache precision; highest memory use.",
+        qualityNote = "Original fused GQA cache; fastest reliable baseline.",
+        usesFullCacheBoundaryConversion = false,
     ),
     FP16(
-        displayName = "FP16 · high quality",
-        shortName = "FP16",
+        displayName = "FP16 native GQA · recommended",
+        shortName = "FP16 native",
         bytesNumerator = 2,
         bytesDenominator = 1,
-        assetFileName = "decoder-cache-fp16.onnx",
+        assetFileName = "decoder-cache-fp16-native-gqa.onnx",
         storage = Storage.FP16,
-        qualityNote = "Half-size IEEE cache; normally near-FP32 quality.",
+        qualityNote = "Fused attention reads and writes FP16 KV directly; only small QKV activations are cast.",
+        usesFullCacheBoundaryConversion = false,
     ),
     BF16(
-        displayName = "BF16 · high range",
-        shortName = "BF16",
+        displayName = "BF16 compatibility · slow",
+        shortName = "BF16 compat",
         bytesNumerator = 2,
         bytesDenominator = 1,
         assetFileName = "decoder-cache-bf16.onnx",
         storage = Storage.BF16,
-        qualityNote = "Half-size cache with FP32-like exponent range and lower mantissa precision.",
+        qualityNote = "Legacy high-range cache with full-cache conversion around attention.",
+        usesFullCacheBoundaryConversion = true,
     ),
     INT8_BALANCED(
-        displayName = "INT8 · balanced",
+        displayName = "INT8 · balanced / memory only",
         shortName = "INT8",
         bytesNumerator = 1,
         bytesDenominator = 1,
         assetFileName = "decoder-cache-int8-balanced.onnx",
         storage = Storage.INT8,
         qualityNote = "4× smaller than FP32; fixed ±4 range with 1/32 steps.",
+        usesFullCacheBoundaryConversion = true,
     ),
     INT8_WIDE(
-        displayName = "INT8 · wide range",
+        displayName = "INT8 · wide / memory only",
         shortName = "INT8 wide",
         bytesNumerator = 1,
         bytesDenominator = 1,
         assetFileName = "decoder-cache-int8-wide.onnx",
         storage = Storage.INT8,
         qualityNote = "4× smaller than FP32; fixed ±8 range with 1/16 steps.",
+        usesFullCacheBoundaryConversion = true,
     ),
     INT4_BALANCED(
-        displayName = "INT4 packed · balanced",
+        displayName = "INT4 packed · balanced / memory only",
         shortName = "INT4",
         bytesNumerator = 1,
         bytesDenominator = 2,
         assetFileName = "decoder-cache-int4-balanced.onnx",
         storage = Storage.PACKED_UINT4,
         qualityNote = "8× smaller than FP32; experimental ±4 range with 0.5 steps.",
+        usesFullCacheBoundaryConversion = true,
     ),
     INT4_WIDE(
-        displayName = "INT4 packed · wide range",
+        displayName = "INT4 packed · wide / memory only",
         shortName = "INT4 wide",
         bytesNumerator = 1,
         bytesDenominator = 2,
         assetFileName = "decoder-cache-int4-wide.onnx",
         storage = Storage.PACKED_UINT4,
         qualityNote = "8× smaller than FP32; experimental ±8 range with 1.0 steps.",
+        usesFullCacheBoundaryConversion = true,
+    ),
+    FP16_COMPAT(
+        displayName = "FP16 compatibility · legacy slow",
+        shortName = "FP16 compat",
+        bytesNumerator = 2,
+        bytesDenominator = 1,
+        assetFileName = "decoder-cache-fp16.onnx",
+        storage = Storage.FP16,
+        qualityNote = "Legacy half-size cache that converts the complete cache around attention.",
+        usesFullCacheBoundaryConversion = true,
     );
 
     enum class Storage {
