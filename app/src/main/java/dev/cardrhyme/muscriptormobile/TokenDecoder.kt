@@ -98,7 +98,7 @@ class TokenDecoder(
                 if (nextSeekTime != null && time >= nextSeekTime!!) return
                 val key = Key(currentProgram, event.value)
                 if (key in open) close(key, time)
-                if (currentVelocity > 0) open(key] = start(key, time)
+                if (currentVelocity > 0) open[key] = start(key, time)
             }
             else -> Unit
         }
@@ -111,7 +111,13 @@ class TokenDecoder(
             val remaining = open.keys.toList()
             remaining.forEach { key ->
                 val active = open[key] ?: return@forEach
-                close(key, max(active.onset + MIN_NOTE_SECONDS, audioDurationSeconds.coerceAtMost(active.onset + 10.0)))
+                close(
+                    key,
+                    max(
+                        active.onset + MIN_NOTE_SECONDS,
+                        audioDurationSeconds.coerceAtMost(active.onset + 10.0),
+                    ),
+                )
             }
         }
         return notes.sortedWith(compareBy<MidiNote> { it.onsetSeconds }.thenBy { it.program }.thenBy { it.pitch })
