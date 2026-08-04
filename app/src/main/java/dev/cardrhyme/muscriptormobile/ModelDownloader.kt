@@ -50,6 +50,41 @@ class ModelDownloader(private val context: Context) {
         File(modelDir, it.name).length() == it.size
     }
 
+    /**
+     * Returns the decoder graph matching the requested persistent cache format.
+     *
+     * Compressed variants are tiny graph adapters bundled in the APK. They continue to reference
+     * the already-downloaded decoder.onnx.data file, so changing cache precision never downloads
+     * another 200+ MiB model.
+     */
+    fun prepareCacheDecoder(precision: CachePrecision): File {
+        if (precision == CachePrecision.FP32) return File(modelDir, "decoder.onnx")
+        check(isReady()) { "Base model must be downloaded before preparing a cache decoder" }
+
+        val assetName = checkNotNull(precision.assetFileName)
+        val target = File(modelDir, assetName)
+        val temporary = File(modelDir, "$assetName.tmp")
+        modelDir.mkdirs()
+
+        try {
+            context.assets.open("cache_decoders/$assetName").use { input ->
+                BufferedOutputStream(FileOutputStream(temporary), 64 * 1024).use { output ->
+                    input.copyTo(output, 64 * 1024)
+                }
+            }
+        } catch (error: Throwable) {
+            temporary.delete()
+            throw IllegalStateException(
+                "Cache decoder asset $assetName is missing from this APK",
+                error,
+            )
+        }
+
+        if (target.exists()) target.delete()
+        check(temporary.renameTo(target)) { "Could not install cache decoder $assetName" }
+        return target
+    }
+
     suspend fun download(
         onProgress: (Progress) -> Unit,
         onStatus: (String) -> Unit,
@@ -135,7 +170,7 @@ class ModelDownloader(private val context: Context) {
             connectTimeout = 30_000
             readTimeout = 60_000
             instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "MuScriptorMobile/0.1")
+            setRequestProperty("User-Agent", "MuScriptorMobile/0.6")
             if (offset > 0) setRequestProperty("Range", "bytes=$offset-")
             connect()
         }
