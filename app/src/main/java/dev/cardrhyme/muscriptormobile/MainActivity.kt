@@ -2,6 +2,7 @@ package dev.cardrhyme.muscriptormobile
 
 import android.content.res.ColorStateList
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -30,7 +31,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
-import kotlin.math.min
 
 class MainActivity : AppCompatActivity() {
     private lateinit var downloader: ModelDownloader
@@ -79,7 +79,7 @@ class MainActivity : AppCompatActivity() {
             lastMidi = null
             saveButton.isEnabled = false
             pianoRoll.reset()
-            previewStatus.text = "Preview starts after a safe MIDI buffer is generated"
+            previewStatus.text = "Preview starts after a safe overlapped MIDI region is finalized"
             refreshButtons()
         }
     }
@@ -164,7 +164,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(header, matchWidth())
 
         root.addView(TextView(this).apply {
-            text = "INT4 transcription • buffered live MIDI preview • CPU / GPU / NPU modes"
+            text = "INT4 transcription • 5 s windows / 4 s hop • 1 s overlap • CPU / GPU / NPU modes"
             textSize = 12.5f
             setTextColor(getColor(R.color.app_on_surface_variant))
             setLineSpacing(2f, 1f)
@@ -184,18 +184,22 @@ class MainActivity : AppCompatActivity() {
             cacheSpinner = themedSpinner(
                 listOf(
                     "Recommended · 1024 cache (~192 MiB)",
+                    "Experimental · 1200 cache (~225 MiB)",
                     "Safer · 896 cache (~168 MiB)",
                     "Ultra low memory · 768 cache (~144 MiB)",
                 ),
             )
             addView(cacheSpinner, fieldMargin())
+            addView(hintText(
+                "1200 may fit this device but uses roughly 33 MiB more KV memory than 1024. If Android kills the process, return to 1024.",
+            ), margin(top = 8, width = LinearLayout.LayoutParams.MATCH_PARENT))
 
             addView(fieldLabel("Compute backend"), margin(top = 14))
             backendSpinner = themedSpinner(ComputeBackend.values().map { it.displayName })
             addView(backendSpinner, fieldMargin())
 
             addView(hintText(
-                "Android chooses whether NNAPI uses the GPU or NPU. Parallel mode prepares the next chunk on the accelerator while the current decoder runs on CPU.",
+                "Android chooses whether NNAPI uses the GPU or NPU. Parallel mode prepares the next overlapped window on the accelerator while the current decoder runs on CPU.",
             ), margin(top = 9, width = LinearLayout.LayoutParams.MATCH_PARENT))
         }, cardMargin())
 
@@ -237,7 +241,7 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(sectionCard("Live preview") {
             addView(hintText(
-                "Playback targets a 3-second finalized-MIDI lead and slows without changing pitch when inference gets close.",
+                "Playback follows only the stable center of each overlapped window, targets a 3-second finalized lead, and slows without changing pitch when inference gets close.",
             ), margin(bottom = 10, width = LinearLayout.LayoutParams.MATCH_PARENT))
 
             previewStatus = statusText("Preview has not started")
@@ -369,13 +373,14 @@ class MainActivity : AppCompatActivity() {
         pianoRoll.reset()
         progress.progress = 0
         inferenceStatus.text = "Opening audio…"
-        previewStatus.text = "Decoding audio before inference"
+        previewStatus.text = "Decoding audio before overlapped inference"
         setBusy(true)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         val cacheLength = when (cacheSpinner.selectedItemPosition) {
-            1 -> 896
-            2 -> 768
+            1 -> 1200
+            2 -> 896
+            3 -> 768
             else -> 1024
         }
         val requestedBackend = ComputeBackend.values().getOrElse(
@@ -409,11 +414,12 @@ class MainActivity : AppCompatActivity() {
 
                 inferenceStatus.text = String.format(
                     Locale.US,
-                    "Loaded %.1f s · initializing %s…",
+                    "Loaded %.1f s · initializing %s · %d cache…",
                     decoded.durationSeconds,
                     requestedBackend.shortName,
+                    cacheLength,
                 )
-                previewStatus.text = "Waiting for the first finalized chunk"
+                previewStatus.text = "Waiting for the first stable overlapped region"
 
                 var activeBackendName = requestedBackend.shortName
                 val result = withContext(Dispatchers.Default) {
@@ -438,20 +444,16 @@ class MainActivity : AppCompatActivity() {
                             onLiveEvent = { event ->
                                 if (event is LiveNoteEvent.Started) noteCount += 1
                                 preview?.accept(event)
-                                pianoRoll.post { pianoRoll.accept(event) }
+                                pianoRoll.accept(event)
                             },
                             onProgress = { state ->
-                                val finalizedSeconds = min(
-                                    decoded.durationSeconds,
-                                    state.completedChunks * CHUNK_SECONDS,
-                                )
-                                preview?.updateFinalizedFrontier(finalizedSeconds)
+                                preview?.updateFinalizedFrontier(state.finalizedSeconds)
                                 val now = System.currentTimeMillis()
                                 if (now - lastProgressPost >= 90 || state.completedChunks == state.totalChunks) {
                                     lastProgressPost = now
                                     runOnUiThread {
-                                        val chunkFraction = state.completedChunks.toDouble() / state.totalChunks
-                                        progress.progress = (120 + chunkFraction * 880).toInt().coerceIn(0, 1000)
+                                        val windowFraction = state.completedChunks.toDouble() / state.totalChunks
+                                        progress.progress = (120 + windowFraction * 880).toInt().coerceIn(0, 1000)
                                         inferenceStatus.text = buildString {
                                             append(activeBackendName)
                                             append(" · ")
@@ -501,7 +503,7 @@ class MainActivity : AppCompatActivity() {
             !state.prepared -> "Preparing original audio player…"
             !state.started -> String.format(
                 Locale.US,
-                "Buffering finalized MIDI · %.1f / 3.5 s",
+                "Buffering stable overlapped MIDI · %.1f / 3.5 s",
                 state.finalizedFrontierSeconds,
             )
             state.waitingForBuffer -> String.format(
@@ -573,7 +575,7 @@ class MainActivity : AppCompatActivity() {
         content: LinearLayout.() -> Unit,
     ): MaterialCardView {
         val card = MaterialCardView(this).apply {
-            radius = 18.dp.toFloat()
+            radius = 3.dp.toFloat()
             cardElevation = 0f
             strokeWidth = 1.dp
             setStrokeColor(getColor(R.color.app_outline))
@@ -645,7 +647,7 @@ class MainActivity : AppCompatActivity() {
         text = value
         isAllCaps = false
         textSize = 14f
-        cornerRadius = 12.dp
+        cornerRadius = 3.dp
         minHeight = 50.dp
         minimumHeight = 50.dp
         insetTop = 0
@@ -671,8 +673,15 @@ class MainActivity : AppCompatActivity() {
         }
         minimumHeight = 50.dp
         setPadding(10.dp, 0, 10.dp, 0)
-        backgroundTintList = colorState(R.color.app_outline)
+        background = sharpFieldBackground()
         popupBackgroundDrawable?.setTint(getColor(R.color.app_surface))
+    }
+
+    private fun sharpFieldBackground() = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = 2.dp.toFloat()
+        setColor(getColor(R.color.app_surface_variant))
+        setStroke(1.dp, getColor(R.color.app_outline))
     }
 
     private fun styleSpinnerText(view: TextView, dropdown: Boolean): TextView = view.apply {
@@ -756,6 +765,5 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_DARK_THEME = "dark_theme"
         private const val DEFAULT_SONG_PERCENT = 20
         private const val DEFAULT_MIDI_PERCENT = 80
-        private const val CHUNK_SECONDS = 5.0
     }
 }
