@@ -9,7 +9,7 @@ import android.net.Uri
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.nio.ByteOrder
-import kotlin.math.floor
+import kotlin.math.max
 
 class AudioDecoder(private val context: Context) {
     data class DecodedAudio(val samples16k: FloatArray, val durationSeconds: Double)
@@ -30,7 +30,13 @@ class AudioDecoder(private val context: Context) {
             codec.configure(inputFormat, null, null, 0)
             codec.start()
 
-            val output = FloatCollector()
+            val expectedTargetSamples = if (durationUs > 0) {
+                ((durationUs / 1_000_000.0) * TARGET_SAMPLE_RATE).toInt() + TARGET_SAMPLE_RATE * 2
+            } else {
+                TARGET_SAMPLE_RATE * 60
+            }
+            val output = FloatCollector(expectedTargetSamples.coerceAtLeast(TARGET_SAMPLE_RATE))
+            var resampler: StreamingLinearResampler? = null
             val info = MediaCodec.BufferInfo()
             var inputEnded = false
             var outputEnded = false
@@ -71,7 +77,11 @@ class AudioDecoder(private val context: Context) {
                 when (val outputIndex = codec.dequeueOutputBuffer(info, 10_000)) {
                     MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                         val format = codec.outputFormat
-                        sampleRate = format.getIntOrDefault(MediaFormat.KEY_SAMPLE_RATE, sampleRate)
+                        val newRate = format.getIntOrDefault(MediaFormat.KEY_SAMPLE_RATE, sampleRate)
+                        if (resampler != null && newRate != sampleRate) {
+                            error("Decoder sample rate changed after PCM output began: $sampleRate to $newRate")
+                        }
+                        sampleRate = newRate
                         channels = format.getIntOrDefault(MediaFormat.KEY_CHANNEL_COUNT, channels)
                         pcmEncoding = format.getIntOrDefault(
                             MediaFormat.KEY_PCM_ENCODING,
@@ -85,7 +95,17 @@ class AudioDecoder(private val context: Context) {
                             val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
                             view.position(info.offset)
                             view.limit(info.offset + info.size)
-                            appendPcm(view.slice().order(ByteOrder.LITTLE_ENDIAN), pcmEncoding, channels, output)
+                            val activeResampler = resampler ?: StreamingLinearResampler(
+                                inputRate = sampleRate,
+                                outputRate = TARGET_SAMPLE_RATE,
+                                output = output,
+                            ).also { resampler = it }
+                            appendPcm(
+                                view.slice().order(ByteOrder.LITTLE_ENDIAN),
+                                pcmEncoding,
+                                channels,
+                                activeResampler,
+                            )
                         }
                         if (durationUs > 0) {
                             onProgress((info.presentationTimeUs.toDouble() / durationUs).toFloat().coerceIn(0f, 1f))
@@ -96,18 +116,13 @@ class AudioDecoder(private val context: Context) {
                 }
             }
 
-            val mono = output.toArray()
-            require(mono.isNotEmpty()) { "Decoder produced no PCM samples" }
-            require(mono.size.toDouble() / sampleRate <= 30.0 * 60.0) {
+            val samples = output.toArray()
+            require(samples.isNotEmpty()) { "Decoder produced no PCM samples" }
+            require(samples.size.toDouble() / TARGET_SAMPLE_RATE <= 30.0 * 60.0) {
                 "Audio longer than 30 minutes is not supported yet"
             }
-            val resampled = if (sampleRate == TARGET_SAMPLE_RATE) mono else linearResample(
-                mono,
-                sampleRate,
-                TARGET_SAMPLE_RATE,
-            )
             onProgress(1f)
-            return DecodedAudio(resampled, resampled.size.toDouble() / TARGET_SAMPLE_RATE)
+            return DecodedAudio(samples, samples.size.toDouble() / TARGET_SAMPLE_RATE)
         } finally {
             runCatching { codec?.stop() }
             runCatching { codec?.release() }
@@ -119,7 +134,7 @@ class AudioDecoder(private val context: Context) {
         buffer: java.nio.ByteBuffer,
         encoding: Int,
         channels: Int,
-        output: FloatCollector,
+        output: StreamingLinearResampler,
     ) {
         require(channels > 0)
         when (encoding) {
@@ -137,7 +152,7 @@ class AudioDecoder(private val context: Context) {
                 repeat(frames) {
                     var sum = 0f
                     repeat(channels) { sum += ((buffer.get().toInt() and 0xff) - 128) / 128f }
-                    output.add(sum / channels)
+                    output.add((sum / channels).coerceIn(-1f, 1f))
                 }
             }
             else -> {
@@ -152,36 +167,55 @@ class AudioDecoder(private val context: Context) {
         }
     }
 
-    private fun linearResample(input: FloatArray, inputRate: Int, outputRate: Int): FloatArray {
-        val outputLength = floor(input.size.toDouble() * outputRate / inputRate).toInt().coerceAtLeast(1)
-        val output = FloatArray(outputLength)
-        val step = inputRate.toDouble() / outputRate
-        for (index in output.indices) {
-            val source = index * step
-            val left = source.toInt().coerceAtMost(input.lastIndex)
-            val right = (left + 1).coerceAtMost(input.lastIndex)
-            val fraction = (source - left).toFloat()
-            output[index] = input[left] + (input[right] - input[left]) * fraction
-        }
-        return output
-    }
-
     private fun MediaFormat.getIntOrDefault(key: String, fallback: Int): Int =
         if (containsKey(key)) getInteger(key) else fallback
 
     private fun MediaFormat.getLongOrDefault(key: String, fallback: Long): Long =
         if (containsKey(key)) getLong(key) else fallback
 
-    private class FloatCollector(initialCapacity: Int = 1 shl 20) {
+    /** Resamples incrementally, so the full 44.1/48 kHz source is never held in the Java heap. */
+    private class StreamingLinearResampler(
+        inputRate: Int,
+        outputRate: Int,
+        private val output: FloatCollector,
+    ) {
+        private val sourceStep = inputRate.toDouble() / outputRate
+        private var inputIndex = -1L
+        private var nextOutputPosition = 0.0
+        private var previous = 0f
+
+        fun add(sample: Float) {
+            inputIndex += 1
+            if (inputIndex == 0L) {
+                output.add(sample)
+                previous = sample
+                nextOutputPosition = sourceStep
+                return
+            }
+            val rightPosition = inputIndex.toDouble()
+            val leftPosition = rightPosition - 1.0
+            while (nextOutputPosition <= rightPosition + 1e-9) {
+                val fraction = (nextOutputPosition - leftPosition).toFloat().coerceIn(0f, 1f)
+                output.add(previous + (sample - previous) * fraction)
+                nextOutputPosition += sourceStep
+            }
+            previous = sample
+        }
+    }
+
+    private class FloatCollector(initialCapacity: Int) {
         private var data = FloatArray(initialCapacity)
         private var size = 0
 
         fun add(value: Float) {
-            if (size == data.size) data = data.copyOf(data.size * 2)
+            if (size == data.size) {
+                val growth = max(65_536, data.size / 4)
+                data = data.copyOf(data.size + growth)
+            }
             data[size++] = value
         }
 
-        fun toArray(): FloatArray = data.copyOf(size)
+        fun toArray(): FloatArray = if (size == data.size) data else data.copyOf(size)
     }
 
     companion object {
