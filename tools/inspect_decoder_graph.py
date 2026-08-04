@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Print the decoder attention/cache topology used by the native-cache experiment."""
 from __future__ import annotations
 
 import argparse
