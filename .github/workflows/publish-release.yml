@@ -1,0 +1,52 @@
+name: Publish APK Release
+
+on:
+  push:
+    paths:
+      - '.github/workflows/publish-release.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Build APK
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Prepare release asset
+        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.1.0.apk
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete v0.1.0 --cleanup-tag --yes || true
+          gh release create v0.1.0 \
+            MuScriptor-Mobile-v0.1.0.apk \
+            --target "$GITHUB_SHA" \
+            --title "MuScriptor Mobile v0.1.0" \
+            --notes "Initial Android ARM64 test build for on-device MuScriptor Medium W4A32 ONNX inference. Includes anonymous model download, live streaming piano-roll events, and MIDI export. This is an unsigned debug build intended for testing on the Xiaomi 14T Pro."
+
+      - name: Persist release link
+        run: |
+          mkdir -p ci
+          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.1.0' > ci/release-url.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add ci/release-url.txt
+          git commit -m "docs: record v0.1.0 release URL" || exit 0
+          git push
