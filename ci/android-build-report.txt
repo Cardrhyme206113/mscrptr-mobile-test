@@ -1,6 +1,6 @@
 exit_code=0
-commit=c62f250ee8ee7385e7fb8c56ff71bc84415888f6
-generated_at=2026-08-04T15:43:59Z
+commit=3c47a0ef7f5f790280b6b4c28f90a6eece8505d3
+generated_at=2026-08-04T15:46:27Z
 
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.11.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
 Daemon will be stopped at the end of the build 
@@ -12,14 +12,15 @@ Daemon will be stopped at the end of the build
 > Task :app:mapDebugSourceSetPaths
 > Task :app:generateDebugResources
 > Task :app:packageDebugResources
-> Task :app:mergeDebugResources
 > Task :app:createDebugCompatibleScreenManifests
 > Task :app:extractDeepLinksDebug
 > Task :app:parseDebugLocalResources
+> Task :app:mergeDebugResources
 > Task :app:processDebugMainManifest
 > Task :app:processDebugManifest
 > Task :app:preDebugUnitTestBuild UP-TO-DATE
 > Task :app:javaPreCompileDebug
+> Task :app:processDebugManifestForPackage
 > Task :app:javaPreCompileDebugUnitTest
 > Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
 > Task :app:mergeDebugShaders
@@ -28,13 +29,12 @@ Daemon will be stopped at the end of the build
 > Task :app:mergeDebugAssets
 > Task :app:compressDebugAssets
 > Task :app:desugarDebugFileDependencies
-> Task :app:processDebugManifestForPackage
-> Task :app:checkDebugDuplicateClasses
 > Task :app:mergeDebugJniLibFolders
-> Task :app:mergeLibDexDebug
+> Task :app:checkDebugDuplicateClasses
 > Task :app:mergeDebugNativeLibs
 > Task :app:processDebugResources
 > Task :app:validateSigningDebug
+> Task :app:mergeLibDexDebug
 > Task :app:writeDebugAppMetadata
 > Task :app:writeDebugSigningConfigVersions
 
@@ -51,8 +51,8 @@ w: file:///home/runner/work/mscrptr-mobile-test/mscrptr-mobile-test/app/src/main
 
 > Task :app:compileDebugJavaWithJavac NO-SOURCE
 > Task :app:bundleDebugClassesToCompileJar
-> Task :app:bundleDebugClassesToRuntimeJar
 > Task :app:processDebugJavaRes
+> Task :app:bundleDebugClassesToRuntimeJar
 > Task :app:compileDebugUnitTestKotlin
 > Task :app:dexBuilderDebug
 > Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
@@ -64,7 +64,7 @@ w: file:///home/runner/work/mscrptr-mobile-test/mscrptr-mobile-test/app/src/main
 > Task :app:packageDebug
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/build-1785858199933.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/build-1785858341983.json
 
-BUILD SUCCESSFUL in 44s
+BUILD SUCCESSFUL in 50s
 41 actionable tasks: 41 executed
