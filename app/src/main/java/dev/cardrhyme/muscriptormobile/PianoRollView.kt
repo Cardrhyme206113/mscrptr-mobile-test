@@ -4,9 +4,13 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 
 class PianoRollView @JvmOverloads constructor(
@@ -21,11 +25,21 @@ class PianoRollView @JvmOverloads constructor(
         val isDrum: Boolean,
     )
 
-    private val completed = ArrayList<MidiNote>()
+    /**
+     * Inference may emit many note events in a burst. Queue them and drain once per UI frame rather
+     * than invalidating and redrawing the whole piano roll for every individual event.
+     */
+    private val pendingEvents = ConcurrentLinkedQueue<LiveNoteEvent>()
+    private val drainPosted = AtomicBoolean(false)
+
+    /** Completed notes are bucketed by onset second, so a 20-second viewport never scans the song. */
+    private val completedBuckets = HashMap<Int, MutableList<MidiNote>>()
+    private val longNotes = ArrayList<MidiNote>()
     private val active = LinkedHashMap<Long, ActiveNote>()
+
     private var cursorSeconds = 0.0
-    private var minimumPitch = 24
-    private var maximumPitch = 108
+    private val minimumPitch = 24
+    private val maximumPitch = 108
 
     private val backgroundPaint = Paint().apply { color = Color.rgb(12, 14, 20) }
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -41,15 +55,52 @@ class PianoRollView @JvmOverloads constructor(
         color = Color.WHITE
         strokeWidth = 2f * resources.displayMetrics.density
     }
+    private val programColors = IntArray(129) { program ->
+        val hue = if (program == 128) 8f else ((program * 47) % 360).toFloat()
+        Color.HSVToColor(floatArrayOf(hue, 0.62f, 0.95f))
+    }
+    private val noteNames = arrayOf(
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    )
 
     fun reset() {
-        completed.clear()
+        pendingEvents.clear()
+        completedBuckets.clear()
+        longNotes.clear()
         active.clear()
         cursorSeconds = 0.0
         invalidate()
     }
 
+    /** Safe to call from the inference thread; events are applied on the UI thread in one batch. */
     fun accept(event: LiveNoteEvent) {
+        pendingEvents.offer(event)
+        scheduleDrain()
+    }
+
+    fun setCursor(seconds: Double) {
+        val safe = seconds.coerceAtLeast(0.0)
+        if (abs(safe - cursorSeconds) < CURSOR_REDRAW_THRESHOLD_SECONDS) return
+        cursorSeconds = safe
+        postInvalidateOnAnimation()
+    }
+
+    private fun scheduleDrain() {
+        if (!drainPosted.compareAndSet(false, true)) return
+        post {
+            drainPosted.set(false)
+            var changed = false
+            while (true) {
+                val event = pendingEvents.poll() ?: break
+                applyEvent(event)
+                changed = true
+            }
+            if (changed) postInvalidateOnAnimation()
+            if (pendingEvents.isNotEmpty()) scheduleDrain()
+        }
+    }
+
+    private fun applyEvent(event: LiveNoteEvent) {
         when (event) {
             is LiveNoteEvent.Started -> {
                 active[event.id] = ActiveNote(
@@ -59,20 +110,19 @@ class PianoRollView @JvmOverloads constructor(
                     event.onsetSeconds,
                     event.isDrum,
                 )
-                cursorSeconds = max(cursorSeconds, event.onsetSeconds)
             }
             is LiveNoteEvent.Ended -> {
                 active.remove(event.id)
-                completed += event.note
-                cursorSeconds = max(cursorSeconds, event.note.offsetSeconds)
+                val note = event.note
+                if (note.offsetSeconds - note.onsetSeconds > WINDOW_SECONDS) {
+                    longNotes += note
+                } else {
+                    completedBuckets.getOrPut(floor(note.onsetSeconds).toInt()) {
+                        ArrayList()
+                    } += note
+                }
             }
         }
-        invalidate()
-    }
-
-    fun setCursor(seconds: Double) {
-        cursorSeconds = max(cursorSeconds, seconds)
-        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -86,59 +136,85 @@ class PianoRollView @JvmOverloads constructor(
         val bottom = height - 18f * density
         val plotWidth = width - labelWidth
         val plotHeight = (bottom - top).coerceAtLeast(1f)
-        val windowSeconds = 20.0
-        val visibleEnd = max(windowSeconds, cursorSeconds + 1.0)
-        val visibleStart = max(0.0, visibleEnd - windowSeconds)
+        val visibleEnd = max(WINDOW_SECONDS, cursorSeconds + 1.0)
+        val visibleStart = max(0.0, visibleEnd - WINDOW_SECONDS)
 
         for (pitch in minimumPitch..maximumPitch step 12) {
             val y = yForPitch(pitch, top, plotHeight)
             canvas.drawLine(labelWidth, y, width.toFloat(), y, gridPaint)
             canvas.drawText(noteName(pitch), 4f * density, y + 4f * density, labelPaint)
         }
-        val firstSecond = visibleStart.toInt()
-        val lastSecond = visibleEnd.toInt() + 1
+
+        val firstSecond = floor(visibleStart).toInt()
+        val lastSecond = ceil(visibleEnd).toInt()
         for (second in firstSecond..lastSecond) {
-            val x = xForTime(second.toDouble(), visibleStart, windowSeconds, labelWidth, plotWidth)
+            val x = xForTime(second.toDouble(), visibleStart, labelWidth, plotWidth)
             canvas.drawLine(x, top, x, bottom, gridPaint)
-            if (second % 5 == 0) canvas.drawText("${second}s", x + 2f, height - 4f, labelPaint)
+            if (second % 5 == 0) {
+                canvas.drawText("${second}s", x + 2f, height - 4f, labelPaint)
+            }
         }
 
-        for (note in completed) {
-            if (note.offsetSeconds < visibleStart || note.onsetSeconds > visibleEnd) continue
-            drawNote(
-                canvas,
-                note.program,
-                note.pitch,
-                note.onsetSeconds,
-                note.offsetSeconds,
-                note.isDrum,
-                visibleStart,
-                windowSeconds,
-                labelWidth,
-                plotWidth,
-                top,
-                plotHeight,
-            )
-        }
-        for (note in active.values) {
-            if (note.onset > visibleEnd) continue
-            drawNote(
-                canvas,
-                note.program,
-                note.pitch,
-                note.onset,
-                max(note.onset + 0.04, cursorSeconds),
-                note.isDrum,
-                visibleStart,
-                windowSeconds,
-                labelWidth,
-                plotWidth,
-                top,
-                plotHeight,
-            )
+        // Notes shorter than the viewport can only overlap it when their onset is at most one
+        // viewport earlier. This bounds drawing work regardless of total song length.
+        val firstBucket = floor(visibleStart - WINDOW_SECONDS).toInt()
+        for (bucket in firstBucket..lastSecond) {
+            completedBuckets[bucket]?.forEach { note ->
+                if (note.offsetSeconds >= visibleStart && note.onsetSeconds <= visibleEnd) {
+                    drawNote(
+                        canvas,
+                        note.program,
+                        note.pitch,
+                        note.onsetSeconds,
+                        note.offsetSeconds,
+                        note.isDrum,
+                        visibleStart,
+                        labelWidth,
+                        plotWidth,
+                        top,
+                        plotHeight,
+                    )
+                }
+            }
         }
 
-        val cursorX = xForTime(cursorSeconds, visibleStart, windowSeconds, labelWidth, plotWidth)
+        longNotes.forEach { note ->
+            if (note.offsetSeconds >= visibleStart && note.onsetSeconds <= visibleEnd) {
+                drawNote(
+                    canvas,
+                    note.program,
+                    note.pitch,
+                    note.onsetSeconds,
+                    note.offsetSeconds,
+                    note.isDrum,
+                    visibleStart,
+                    labelWidth,
+                    plotWidth,
+                    top,
+                    plotHeight,
+                )
+            }
+        }
+
+        active.values.forEach { note ->
+            if (note.onset <= visibleEnd) {
+                drawNote(
+                    canvas,
+                    note.program,
+                    note.pitch,
+                    note.onset,
+                    max(note.onset + 0.04, cursorSeconds),
+                    note.isDrum,
+                    visibleStart,
+                    labelWidth,
+                    plotWidth,
+                    top,
+                    plotHeight,
+                )
+            }
+        }
+
+        val cursorX = xForTime(cursorSeconds, visibleStart, labelWidth, plotWidth)
         canvas.drawLine(cursorX, top, cursorX, bottom, cursorPaint)
     }
 
@@ -150,19 +226,26 @@ class PianoRollView @JvmOverloads constructor(
         offset: Double,
         isDrum: Boolean,
         visibleStart: Double,
-        windowSeconds: Double,
         labelWidth: Float,
         plotWidth: Float,
         top: Float,
         plotHeight: Float,
     ) {
-        val x1 = xForTime(onset, visibleStart, windowSeconds, labelWidth, plotWidth)
-        val x2 = xForTime(max(offset, onset + if (isDrum) 0.08 else 0.03), visibleStart, windowSeconds, labelWidth, plotWidth)
+        val x1 = xForTime(onset, visibleStart, labelWidth, plotWidth)
+        val x2 = xForTime(
+            max(offset, onset + if (isDrum) 0.08 else 0.03),
+            visibleStart,
+            labelWidth,
+            plotWidth,
+        )
         val noteHeight = plotHeight / (maximumPitch - minimumPitch + 1)
         val y = yForPitch(pitch, top, plotHeight)
-        notePaint.color = colorForProgram(program)
+        notePaint.color = programColors[program.coerceIn(0, 128)]
         canvas.drawRoundRect(
-            RectF(x1, y - noteHeight * 0.85f, max(x1 + 2f, x2), y),
+            x1,
+            y - noteHeight * 0.85f,
+            max(x1 + 2f, x2),
+            y,
             2f,
             2f,
             notePaint,
@@ -172,10 +255,9 @@ class PianoRollView @JvmOverloads constructor(
     private fun xForTime(
         time: Double,
         visibleStart: Double,
-        windowSeconds: Double,
         labelWidth: Float,
         plotWidth: Float,
-    ): Float = labelWidth + (((time - visibleStart) / windowSeconds) * plotWidth).toFloat()
+    ): Float = labelWidth + (((time - visibleStart) / WINDOW_SECONDS) * plotWidth).toFloat()
 
     private fun yForPitch(pitch: Int, top: Float, plotHeight: Float): Float {
         val normalized = (pitch.coerceIn(minimumPitch, maximumPitch) - minimumPitch).toFloat() /
@@ -183,13 +265,11 @@ class PianoRollView @JvmOverloads constructor(
         return top + plotHeight * (1f - normalized)
     }
 
-    private fun colorForProgram(program: Int): Int {
-        val hue = if (program == 128) 8f else ((program * 47) % 360).toFloat()
-        return Color.HSVToColor(floatArrayOf(hue, 0.62f, 0.95f))
-    }
+    private fun noteName(pitch: Int): String =
+        "${noteNames[pitch % 12]}${pitch / 12 - 1}"
 
-    private fun noteName(pitch: Int): String {
-        val names = arrayOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
-        return "${names[pitch % 12]}${pitch / 12 - 1}"
+    companion object {
+        private const val WINDOW_SECONDS = 20.0
+        private const val CURSOR_REDRAW_THRESHOLD_SECONDS = 0.025
     }
 }

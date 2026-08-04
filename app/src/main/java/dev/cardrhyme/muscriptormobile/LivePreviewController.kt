@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -15,10 +16,11 @@ import java.util.PriorityQueue
 import kotlin.math.abs
 
 /**
- * Uses the original recording as the master clock and schedules generated MIDI against it.
- * Playback normally stays three seconds behind fully generated chunks. When inference falls
- * behind, ExoPlayer is slowed with pitch fixed at 1.0; only a completely empty safety buffer
- * causes a short emergency hold.
+ * Uses the original recording as the master clock and schedules finalized MIDI notes against it.
+ *
+ * LiveNoteEvent.Started is intentionally not sent to the synth: it is provisional until the model
+ * emits the matching Ended event. Playing provisional starts caused stale/random notes that never
+ * existed in the exported MIDI. The piano roll may still display provisional notes separately.
  */
 class LivePreviewController(
     context: Context,
@@ -42,6 +44,7 @@ class LivePreviewController(
             val program: Int,
             val pitch: Int,
             val isDrum: Boolean,
+            val offsetSeconds: Double,
         ) : Action
 
         data class Off(val id: Long) : Action
@@ -54,14 +57,15 @@ class LivePreviewController(
         val action: Action,
     )
 
+    private val eventComparator = compareBy<ScheduledEvent> { it.timeSeconds }
+        .thenBy { it.priority }
+        .thenBy { it.sequence }
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val eventLock = Any()
     private val allEvents = ArrayList<ScheduledEvent>()
-    private val pendingEvents = PriorityQueue<ScheduledEvent>(
-        compareBy<ScheduledEvent> { it.timeSeconds }
-            .thenBy { it.priority }
-            .thenBy { it.sequence },
-    )
+    private val pendingEvents = PriorityQueue(eventComparator)
+    private val finalizedIds = HashSet<Long>()
     private var eventSequence = 0L
 
     private val synth = LiveMidiSynth()
@@ -92,11 +96,17 @@ class LivePreviewController(
     @Volatile
     private var audioDurationSeconds = 0.0
 
+    @Volatile
+    private var lastKnownPositionSeconds = 0.0
+
     private var closed = false
     private var started = false
     private var userPaused = false
     private var emergencyHold = false
     private var currentSpeed = 1f
+    private var lastUiUpdateMs = 0L
+    private var lastSpeedApplyMs = 0L
+    private var lastUiSignature = -1
 
     private val tick = object : Runnable {
         override fun run() {
@@ -112,28 +122,40 @@ class LivePreviewController(
     }
 
     fun accept(event: LiveNoteEvent) {
-        val scheduled = when (event) {
-            is LiveNoteEvent.Started -> ScheduledEvent(
-                timeSeconds = event.onsetSeconds,
-                priority = 1,
-                sequence = nextSequence(),
-                action = Action.On(
-                    id = event.id,
-                    program = event.program,
-                    pitch = event.pitch,
-                    isDrum = event.isDrum,
-                ),
-            )
-            is LiveNoteEvent.Ended -> ScheduledEvent(
-                timeSeconds = event.note.offsetSeconds,
-                priority = 0,
-                sequence = nextSequence(),
-                action = Action.Off(event.id),
-            )
-        }
+        // Starts are provisional. They stay visible in PianoRollView but are not audible until the
+        // corresponding final note is emitted.
+        if (event !is LiveNoteEvent.Ended) return
+
+        val note = event.note
+        if (!note.onsetSeconds.isFinite() || !note.offsetSeconds.isFinite()) return
+        if (note.pitch !in 0..127) return
+        if (note.offsetSeconds <= note.onsetSeconds) return
+
+        val on = ScheduledEvent(
+            timeSeconds = note.onsetSeconds,
+            priority = 1,
+            sequence = nextSequence(),
+            action = Action.On(
+                id = event.id,
+                program = note.program,
+                pitch = note.pitch,
+                isDrum = note.isDrum,
+                offsetSeconds = note.offsetSeconds,
+            ),
+        )
+        val off = ScheduledEvent(
+            timeSeconds = note.offsetSeconds,
+            priority = 0,
+            sequence = nextSequence(),
+            action = Action.Off(event.id),
+        )
+
         synchronized(eventLock) {
-            allEvents += scheduled
-            pendingEvents += scheduled
+            if (!finalizedIds.add(event.id)) return
+            allEvents += on
+            allEvents += off
+            pendingEvents += on
+            pendingEvents += off
         }
     }
 
@@ -167,6 +189,7 @@ class LivePreviewController(
                 rebuildAt(player.currentPosition / 1000.0)
                 player.play()
             }
+            publishState(force = true)
         }
     }
 
@@ -175,22 +198,31 @@ class LivePreviewController(
             if (!started) return@runOnMain
             userPaused = false
             emergencyHold = false
+            currentSpeed = 1f
+            player.playbackParameters = PlaybackParameters(1f, 1f)
             player.seekTo(0)
             rebuildAt(0.0)
             player.play()
+            publishState(force = true)
         }
     }
 
     private fun tickOnMain() {
-        val prepared = player.playbackState == Player.STATE_READY || player.playbackState == Player.STATE_ENDED
+        val now = SystemClock.uptimeMillis()
+        val prepared = player.playbackState == Player.STATE_READY ||
+            player.playbackState == Player.STATE_ENDED
+
         if (!started && prepared && (inferenceComplete || finalizedFrontierSeconds >= START_BUFFER_SECONDS)) {
             started = true
+            currentSpeed = 1f
             player.seekTo(0)
             rebuildAt(0.0)
             player.play()
+            publishState(force = true)
         }
 
         val position = player.currentPosition.coerceAtLeast(0L) / 1000.0
+        lastKnownPositionSeconds = position
         val frontier = if (inferenceComplete) {
             maxOf(finalizedFrontierSeconds, audioDurationSeconds)
         } else {
@@ -204,38 +236,39 @@ class LivePreviewController(
                     emergencyHold = true
                     player.pause()
                     synth.allNotesOff()
+                    publishState(force = true)
                 }
             } else {
                 if (emergencyHold && (inferenceComplete || lead >= EMERGENCY_RESUME_SECONDS)) {
                     emergencyHold = false
                     rebuildAt(position)
                     player.play()
+                    publishState(force = true)
                 }
+
                 if (!emergencyHold) {
                     val targetSpeed = if (inferenceComplete) 1f else speedForLead(lead)
                     currentSpeed += (targetSpeed - currentSpeed) * SPEED_SMOOTHING
-                    if (abs(player.playbackParameters.speed - currentSpeed) > 0.015f) {
+
+                    if (
+                        now - lastSpeedApplyMs >= SPEED_APPLY_MILLIS &&
+                        abs(player.playbackParameters.speed - currentSpeed) > SPEED_CHANGE_THRESHOLD
+                    ) {
                         // pitch=1 keeps musical pitch stable while the recording slows down.
                         player.playbackParameters = PlaybackParameters(currentSpeed, 1f)
+                        lastSpeedApplyMs = now
                     }
+
                     if (!player.isPlaying && prepared) player.play()
                     processPending(position)
                 }
             }
         }
 
-        onState(
-            State(
-                prepared = prepared,
-                started = started,
-                playing = player.isPlaying && !userPaused && !emergencyHold,
-                waitingForBuffer = !started || emergencyHold,
-                positionSeconds = position,
-                finalizedFrontierSeconds = frontier,
-                leadSeconds = lead,
-                speed = if (started) currentSpeed else 0f,
-            ),
-        )
+        if (now - lastUiUpdateMs >= UI_UPDATE_MILLIS) {
+            publishState(force = false)
+            lastUiUpdateMs = now
+        }
     }
 
     private fun speedForLead(leadSeconds: Double): Float = when {
@@ -247,19 +280,32 @@ class LivePreviewController(
         else -> MIN_PLAYBACK_SPEED
     }.coerceIn(MIN_PLAYBACK_SPEED, 1f)
 
+    /**
+     * Trigger notes early by the AudioTrack queue depth so their audible output aligns with the
+     * original song rather than arriving one hardware buffer late.
+     */
     private fun processPending(positionSeconds: Double) {
+        val audibleHorizon = positionSeconds + synth.outputLatencySeconds + EVENT_LOOKAHEAD_SECONDS
+
         while (true) {
             val event = synchronized(eventLock) {
                 val next = pendingEvents.peek() ?: return
-                if (next.timeSeconds <= positionSeconds + EVENT_LOOKAHEAD_SECONDS) pendingEvents.poll() else return
+                if (next.timeSeconds <= audibleHorizon) pendingEvents.poll() else return
             }
+
             when (val action = event.action) {
-                is Action.On -> synth.noteOn(
-                    action.id,
-                    action.program,
-                    action.pitch,
-                    action.isDrum,
-                )
+                is Action.On -> {
+                    // A finalized long note may arrive after its onset. Start it late only while it
+                    // is still active; never burst notes whose entire lifetime is already behind us.
+                    if (action.offsetSeconds > positionSeconds - PAST_EVENT_TOLERANCE_SECONDS) {
+                        synth.noteOn(
+                            action.id,
+                            action.program,
+                            action.pitch,
+                            action.isDrum,
+                        )
+                    }
+                }
                 is Action.Off -> synth.noteOff(action.id)
             }
         }
@@ -267,27 +313,72 @@ class LivePreviewController(
 
     private fun rebuildAt(positionSeconds: Double) {
         synth.allNotesOff()
-        val active = LinkedHashMap<Long, Action.On>()
-        synchronized(eventLock) {
+        lastKnownPositionSeconds = positionSeconds
+
+        val snapshot = synchronized(eventLock) {
             pendingEvents.clear()
-            for (event in allEvents.sortedWith(
-                compareBy<ScheduledEvent> { it.timeSeconds }
-                    .thenBy { it.priority }
-                    .thenBy { it.sequence },
-            )) {
-                if (event.timeSeconds <= positionSeconds) {
-                    when (val action = event.action) {
-                        is Action.On -> active[action.id] = action
-                        is Action.Off -> active.remove(action.id)
-                    }
-                } else {
-                    pendingEvents += event
+            allEvents.sortedWith(eventComparator)
+        }
+        val active = LinkedHashMap<Long, Action.On>()
+        val future = ArrayList<ScheduledEvent>()
+
+        for (event in snapshot) {
+            if (event.timeSeconds <= positionSeconds) {
+                when (val action = event.action) {
+                    is Action.On -> active[action.id] = action
+                    is Action.Off -> active.remove(action.id)
                 }
+            } else {
+                future += event
             }
         }
-        active.values.forEach {
-            synth.noteOn(it.id, it.program, it.pitch, it.isDrum)
+
+        synchronized(eventLock) {
+            pendingEvents.addAll(future)
         }
+        active.values.forEach { action ->
+            if (action.offsetSeconds > positionSeconds) {
+                synth.noteOn(
+                    action.id,
+                    action.program,
+                    action.pitch,
+                    action.isDrum,
+                )
+            }
+        }
+    }
+
+    private fun publishState(force: Boolean) {
+        val prepared = player.playbackState == Player.STATE_READY ||
+            player.playbackState == Player.STATE_ENDED
+        val position = player.currentPosition.coerceAtLeast(0L) / 1000.0
+        val frontier = if (inferenceComplete) {
+            maxOf(finalizedFrontierSeconds, audioDurationSeconds)
+        } else {
+            finalizedFrontierSeconds
+        }
+        val signature =
+            (if (prepared) 1 else 0) or
+                (if (started) 2 else 0) or
+                (if (player.isPlaying) 4 else 0) or
+                (if (userPaused) 8 else 0) or
+                (if (emergencyHold) 16 else 0)
+
+        if (!force && signature == lastUiSignature && closed) return
+        lastUiSignature = signature
+
+        onState(
+            State(
+                prepared = prepared,
+                started = started,
+                playing = player.isPlaying && !userPaused && !emergencyHold,
+                waitingForBuffer = !started || emergencyHold,
+                positionSeconds = position,
+                finalizedFrontierSeconds = frontier,
+                leadSeconds = frontier - position,
+                speed = if (started) currentSpeed else 0f,
+            ),
+        )
     }
 
     private fun nextSequence(): Long = synchronized(eventLock) { eventSequence++ }
@@ -314,8 +405,12 @@ class LivePreviewController(
         private const val EMERGENCY_HOLD_SECONDS = 0.06
         private const val EMERGENCY_RESUME_SECONDS = 0.65
         private const val MIN_PLAYBACK_SPEED = 0.10f
-        private const val SPEED_SMOOTHING = 0.18f
-        private const val EVENT_LOOKAHEAD_SECONDS = 0.018
-        private const val TICK_MILLIS = 40L
+        private const val SPEED_SMOOTHING = 0.12f
+        private const val SPEED_CHANGE_THRESHOLD = 0.025f
+        private const val SPEED_APPLY_MILLIS = 120L
+        private const val EVENT_LOOKAHEAD_SECONDS = 0.008
+        private const val PAST_EVENT_TOLERANCE_SECONDS = 0.015
+        private const val TICK_MILLIS = 12L
+        private const val UI_UPDATE_MILLIS = 100L
     }
 }

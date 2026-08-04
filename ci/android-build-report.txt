@@ -1,28 +1,28 @@
 exit_code=0
-commit=60dddc844f14a465a2fb917368263e54b7d2d5fa
-generated_at=2026-08-04T08:46:36Z
+commit=100898bd582764a8e0664de835a606c687b5fc8a
+generated_at=2026-08-04T09:41:03Z
 
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.11.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
 Daemon will be stopped at the end of the build 
 > Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
 > Task :app:preBuild UP-TO-DATE
 > Task :app:preDebugBuild UP-TO-DATE
-> Task :app:generateDebugResValues
 > Task :app:checkDebugAarMetadata
+> Task :app:generateDebugResValues
 > Task :app:mapDebugSourceSetPaths
 > Task :app:generateDebugResources
 > Task :app:packageDebugResources
-> Task :app:mergeDebugResources
 > Task :app:createDebugCompatibleScreenManifests
 > Task :app:extractDeepLinksDebug
 > Task :app:parseDebugLocalResources
+> Task :app:mergeDebugResources
 > Task :app:processDebugMainManifest
 > Task :app:processDebugManifest
-> Task :app:preDebugUnitTestBuild UP-TO-DATE
-> Task :app:javaPreCompileDebug
 > Task :app:processDebugManifestForPackage
-> Task :app:javaPreCompileDebugUnitTest
+> Task :app:javaPreCompileDebug
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
 > Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:javaPreCompileDebugUnitTest
 > Task :app:mergeDebugShaders
 > Task :app:compileDebugShaders NO-SOURCE
 > Task :app:generateDebugAssets UP-TO-DATE
@@ -45,12 +45,12 @@ Unable to strip the following libraries, packaging them as they are: libonnxrunt
 
 > Task :app:compileDebugKotlin
 w: file:///home/runner/work/mscrptr-mobile-test/mscrptr-mobile-test/app/src/main/java/dev/cardrhyme/muscriptormobile/AudioDecoder.kt:91:65 'static field INFO_OUTPUT_BUFFERS_CHANGED: Int' is deprecated. Deprecated in Java.
-w: file:///home/runner/work/mscrptr-mobile-test/mscrptr-mobile-test/app/src/main/java/dev/cardrhyme/muscriptormobile/PianoRollView.kt:37:51 'field scaledDensity: Float' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/mscrptr-mobile-test/mscrptr-mobile-test/app/src/main/java/dev/cardrhyme/muscriptormobile/PianoRollView.kt:51:51 'field scaledDensity: Float' is deprecated. Deprecated in Java.
 
 > Task :app:compileDebugJavaWithJavac NO-SOURCE
-> Task :app:bundleDebugClassesToRuntimeJar
-> Task :app:bundleDebugClassesToCompileJar
 > Task :app:processDebugJavaRes
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:bundleDebugClassesToRuntimeJar
 > Task :app:compileDebugUnitTestKotlin
 > Task :app:dexBuilderDebug
 > Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
@@ -62,7 +62,7 @@ w: file:///home/runner/work/mscrptr-mobile-test/mscrptr-mobile-test/app/src/main
 > Task :app:packageDebug
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/build-1785833153417.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/build-1785836421045.json
 
-BUILD SUCCESSFUL in 47s
+BUILD SUCCESSFUL in 46s
 41 actionable tasks: 41 executed
