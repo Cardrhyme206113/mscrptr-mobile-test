@@ -1,0 +1,2130 @@
+repo=happyme531/muscriptor-medium-onnx
+sha=7d1a2cc14a335f3bbee445147286f215287ab2a4
+private=False gated=False
+
+FILES
+{"path": ".gitattributes", "size": 1659, "lfs": null}
+{"path": "LICENSE", "size": 894, "lfs": null}
+{"path": "NOTICE.md", "size": 1733, "lfs": null}
+{"path": "README.md", "size": 4852, "lfs": null}
+{"path": "UPSTREAM_MODEL_CARD.md", "size": 10198, "lfs": null}
+{"path": "onnx/w4a32_optimized/conditioner.onnx", "size": 6223112, "lfs": {"size": 6223112, "sha256": "c1ea7895ade9760538f42f63110a782bcc1606dee89f2ee434db2251434a3c7d", "pointer_size": 132}}
+{"path": "onnx/w4a32_optimized/config.json", "size": 1274, "lfs": null}
+{"path": "onnx/w4a32_optimized/decoder.onnx", "size": 79814, "lfs": {"size": 79814, "sha256": "74e1181288fa5205754e9661cbccafc5182d035beadd4412da1ecd00515c3de9", "pointer_size": 130}}
+{"path": "onnx/w4a32_optimized/decoder.onnx.data", "size": 217354240, "lfs": {"size": 217354240, "sha256": "4bc6ac2807854632bacc0ef9b5e9e1871545e573194fe7fc197948730aa3c8ef", "pointer_size": 134}}
+{"path": "runtime/LICENSE", "size": 1072, "lfs": null}
+{"path": "runtime/muscriptor_onnx/__init__.py", "size": 152, "lfs": null}
+{"path": "runtime/muscriptor_onnx/audio.py", "size": 2765, "lfs": null}
+{"path": "runtime/requirements.txt", "size": 60, "lfs": null}
+{"path": "runtime/test_onnxruntime.py", "size": 11076, "lfs": null}
+
+TEXT FILES
+
+--- NOTICE.md (1731 chars) ---
+# MuScriptor ONNX derivative attribution notice
+
+This repository contains derivative ONNX Runtime exports of MuScriptor Medium.
+
+- Original model: https://huggingface.co/MuScriptor/muscriptor-medium
+- Original project: https://github.com/muscriptor/muscriptor
+- Original developers: Mirelo × Kyutai
+- Original authors: Alexandre Rouard, Michael Krause, Axel Roebel,
+  Carl-Johann Simon-Gabriel, and Alexandre Défossez
+- ONNX conversion and quantization repository: happyme531/muscriptor-medium-onnx
+
+Changes from the original checkpoint:
+
+1. The model was exported to FP32 ONNX conditioner and autoregressive decoder
+   graphs with explicit KV-cache inputs and outputs.
+2. The decoder attention was rewritten to 24 ONNX Runtime
+   `GroupQueryAttention` nodes with past/present shared-buffer support.
+3. Forty-eight residual Add + LayerNorm patterns were fused into
+   `SkipLayerNormalization` nodes.
+4. Ninety-six Transformer-backbone MatMul weights were quantized to symmetric
+   INT4 with RTN, group size 32, using ONNX Runtime `MatMulNBits`.
+5. Embeddings, the conditioner, and the LM head remain FP32 and unquantized.
+   Log-mel audio preprocessing remains outside the ONNX graphs.
+
+The original and derivative model weights are licensed under CC BY-NC 4.0.
+Users must also comply with the original model card's supplemental conditions,
+including holding all necessary rights to input audio and avoiding illegal or
+unauthorized use. See `UPSTREAM_MODEL_CARD.md` for the complete upstream terms,
+intended uses, limitations, citation, and disclaimers.
+
+This derivative repository is not affiliated with or endorsed by Mirelo,
+Kyutai, or the original authors. The models and generated content are provided
+as-is without warranty.
+
+
+--- README.md (4849 chars) ---
+---
+license: cc-by-nc-4.0
+library_name: onnxruntime
+base_model: MuScriptor/muscriptor-medium
+tags:
+  - muscriptor
+  - music-transcription
+  - automatic-music-transcription
+  - audio-to-midi
+  - onnx
+  - onnxruntime
+  - int4
+---
+
+# MuScriptor Medium — optimized W4A32 ONNX Runtime
+
+This is an **unofficial derivative ONNX conversion** of
+[`MuScriptor/muscriptor-medium`](https://huggingface.co/MuScriptor/muscriptor-medium),
+developed by Mirelo × Kyutai. It is not affiliated with or endorsed by the
+MuScriptor authors.
+
+The conversion uses upstream revision
+`f32236969308476e01fd3aae67357de5feb05a2d`. The source checkpoint SHA-256 is
+`ac80adbdf85d87231735fd948af7013441c0afced316c4e9067fd5d8a7fb97ec`.
+
+## Model variant
+
+The deployable model is in `onnx/w4a32_optimized`.
+
+| Component | Storage / graph dtype |
+|---|---|
+| Transformer backbone | symmetric RTN INT4, group size 32 |
+| Graph activations and KV cache | FP32 |
+| Token and metadata embeddings | FP32, not quantized |
+| LM head | FP32, not quantized |
+| Conditioner | FP32, not quantized |
+
+Only the 96 constant-weight MatMul operations in the 24-layer Transformer
+backbone are converted to ONNX Runtime `MatMulNBits`. The graph uses
+`accuracy_level=4`: its public tensors remain FP32, while supported CPU kernels
+dynamically quantize MatMul activations to INT8 and accumulate in INT32.
+
+The decoder additionally contains 24 `GroupQueryAttention` and 48
+`SkipLayerNormalization` nodes. Its fixed-capacity KV cache supports ONNX
+Runtime past/present buffer sharing through I/O Binding, avoiding allocation
+and copying of the complete cache on every token.
+
+`decoder.onnx.data` contains external tensor data and **must remain next to**
+`decoder.onnx`.
+
+## Quick smoke test
+
+```bash
+hf download happyme531/muscriptor-medium-onnx --local-dir muscriptor-medium-onnx
+cd muscriptor-medium-onnx
+uv venv
+source .venv/bin/activate
+uv pip install -r runtime/requirements.txt
+python runtime/test_onnxruntime.py \
+  --model-dir onnx/w4a32_optimized \
+  --provider cpu --max-new-tokens 8 --intra-op-threads 16
+```
+
+Use `--audio path/to/audio.wav` to replace the deterministic five-second
+440 Hz smoke-test tone. The helper validates low-level conditioner/decoder
+execution and greedy token generation; it is not the complete upstream
+multi-chunk audio-to-MIDI application.
+
+The default cache length is 2504 positions. A shared FP32 cache at that length
+occupies about 469.5 MiB. Lower `--max-cache-length` when the deployment has a
+smaller generation budget.
+
+## Validation
+
+The model passes `onnx.checker.check_model` and was executed with ONNX Runtime
+1.26.0 on x86-64 CPU. Results below use a Xeon Gold 6278C, one NUMA node,
+16 intra-op threads, shared KV buffers, a five-second 440 Hz input, and a
+576-position cache:
+
+| Metric | Result |
+|---|---:|
+| Prefill | 468.0 ms |
+| Steady decode, mean over 56 measured tokens | 7.74 ms/token |
+| Steady decode median | 7.73 ms/token |
+| Steady decode p90 | 7.85 ms/token |
+
+A 64-step teacher-forced comparison against the original FP32 PyTorch model
+gave 81.25% top-1 agreement, 0.741 mean top-5 overlap, 0.286 centered relative
+logit L2 error, and 0.208 mean probability total variation. This synthetic
+smoke input is useful for regression testing, not a transcription-quality
+benchmark.
+
+ARM64 execution was not measured on the target SoC. ONNX Runtime's CPU kernels
+provide an ARM64 path for this graph: the quantized backbone can use MLAS NEON
+dot-product kernels, while GQA's FP32 matrix multiplications use MLAS SGEMM.
+KleidiAI/SME acceleration additionally depends on the ONNX Runtime build and
+the device's runtime CPU features.
+
+## Files
+
+| File | Size | SHA-256 |
+|---|---:|---|
+| `onnx/w4a32_optimized/conditioner.onnx` | 6,223,112 bytes | `c1ea7895ade9760538f42f63110a782bcc1606dee89f2ee434db2251434a3c7d` |
+| `onnx/w4a32_optimized/decoder.onnx` | 79,814 bytes | `74e1181288fa5205754e9661cbccafc5182d035beadd4412da1ecd00515c3de9` |
+| `onnx/w4a32_optimized/decoder.onnx.data` | 217,354,240 bytes | `4bc6ac2807854632bacc0ef9b5e9e1871545e573194fe7fc197948730aa3c8ef` |
+
+Total model storage, excluding the small JSON config, is 223,657,166 bytes
+(213.30 MiB).
+
+## License, attribution, and conditions
+
+The original model weights and these derivative ONNX weights are distributed
+under [Creative Commons Attribution-NonCommercial 4.0 International](LICENSE).
+Commercial use is not permitted under that license. Users must also comply
+with the upstream supplemental conditions, including holding all necessary
+rights to input audio and complying with applicable laws.
+
+See [NOTICE.md](NOTICE.md) for attribution and
+[UPSTREAM_MODEL_CARD.md](UPSTREAM_MODEL_CARD.md) for the original model card,
+intended uses, limitations, supplemental conditions, author list, and citation.
+The runtime helpers are covered by [their MIT license](runtime/LICENSE).
+
+
+--- UPSTREAM_MODEL_CARD.md (10159 chars) ---
+---
+license: cc-by-nc-4.0
+library_name: muscriptor
+extra_gated_prompt: "MuScriptor is the result of a research collaboration between Mirelo and Kyutai whose purpose is to transcribe audio to MIDI/music sheet. It is provided primarily for research purposes under the CC BY-NC 4.0 licence supplemented by the below specific conditions of use.\nSpecific conditions of use: MuScriptor and any generated content by MuScriptor are provided as is without any warranty of any kind, including but not limited to any warranty of non-infringement. Use of MuScriptor and its output must comply with all applicable laws and must not result in, involve, or facilitate any illegal or unauthorized activity. Prohibited uses include, without limitation, inputting music files and transcribing them to MIDI/music sheet without having all the necessary rights, including intellectual property rights, under applicable laws. Accordingly, users of MuScriptor undertake and warrant to have all the necessary rights, including intellectual property rights, in connection with their use of MuScriptor and its output. We disclaim all liability for any non-compliant use and users of MuScriptor shall indemnify, defend, and hold harmless Mirelo and Kyutai from and against any and all claims, damages, losses, liabilities, and expenses (including reasonable attorneys' fees) incurred by Mirelo and/or Kyutai arising out of or resulting from their failure to comply with the terms of the CC BY-NC 4.0 licence and/or these specific conditions of use."
+extra_gated_fields:
+  Company or university if applicable: text
+  I am a:
+    type: select
+    options: 
+      - Musician
+      - AI Researcher
+      - Other
+tags:
+- music
+- music-transcription
+- automatic-music-transcription
+- amt
+- audio-to-midi
+- midi
+- music-information-retrieval
+- transformer
+- pytorch
+---
+
+# MuScriptor — medium (≈300M)
+
+**MuScriptor** is an open-weight model for **general-purpose, multi-instrument automatic music transcription (AMT)**: it converts a music recording (any genre, multiple simultaneous instruments) into a stream of notes played. This repository hosts the **medium** variant (≈300M parameters), the default checkpoint downloaded by the `muscriptor` library.
+
+`muscriptor-medium` balances quality and footprint. For the best transcription quality use [`muscriptor-large`](https://huggingface.co/MuScriptor/muscriptor-large) (≈1.3B); for the smallest/fastest option use [`muscriptor-small`](https://huggingface.co/MuScriptor/muscriptor-small) (≈100M).
+
+- Developed by [Mirelo](https://www.mirelo.ai/) x [kyutai](https://kyutai.org/)
+- 📄 Paper: *MuScriptor: An Open Model for Multi-Instrument Music Transcription* — Rouard, Krause, Roebel, Simon-Gabriel, Défossez (2026). _<!-- TODO: add arXiv link once public; it will auto-cross-link on the Hub -->_
+- 💻 Code: <https://github.com/muscriptor/muscriptor>
+- 🔊 Audio samples: <https://muscriptor.github.io>
+
+## Table of contents
+
+- [Quickstart](#quickstart)
+- [Model description](#model-description)
+- [Model variants](#model-variants)
+- [Intended uses & limitations](#intended-uses--limitations)
+- [Instrument conditioning](#instrument-conditioning)
+- [Training](#training)
+- [Evaluation](#evaluation)
+- [Citation](#citation)
+- [License](#license)
+
+## Quickstart
+
+Install the `muscriptor` package (it uses `huggingface_hub` to fetch weights automatically):
+
+```bash
+pip install git+https://github.com/muscriptor/muscriptor.git
+# TODO (PyPI release forthcoming: pip install muscriptor)
+```
+
+### Python
+
+```python
+from pathlib import Path
+from muscriptor import TranscriptionModel
+
+# "medium" resolves to hf://MuScriptor/muscriptor-medium and downloads on first use.
+model = TranscriptionModel.load_model("medium")
+
+# Get a MIDI file directly:
+Path("out.mid").write_bytes(model.transcribe_to_midi("audio.wav"))
+
+# Or stream note events as they are transcribed:
+for event in model.transcribe("audio.wav"):
+    print(event)  # NoteStartEvent / NoteEndEvent / ProgressEvent
+```
+
+`load_model` accepts a size keyword (`"small"`/`"medium"`/`"large"`), a local `.safetensors` path, or an `hf://` / `https://` URL. Weights loaded by size keyword (or any `hf://` URL) are cached in the standard Hugging Face cache (`~/.cache/huggingface/hub`, configurable via `HF_HOME`); weights fetched from a plain `http(s)://` URL are cached under `~/.cache/muscriptor/`. Input audio can be WAV or any format `libsndfile` reads (mp3, flac, ogg, m4a, …); it is resampled to 16 kHz mono internally.
+
+### CLI
+
+```bash
+muscriptor transcribe --model medium audio.wav -o out.mid
+```
+
+## Model description
+
+MuScriptor performs transcription by **autoregressively predicting a MIDI-like token sequence** given the mel-spectrogram of a short audio segment, following the sequence-to-sequence AMT paradigm (cf. MT3). It deliberately avoids complex architectural tweaks in favor of a simple, decoder-only Transformer.
+
+- **Architecture:** decoder-only Transformer (this variant: `dim=1024`, `num_heads=16`, `num_layers=24`).
+- **Input:** raw waveform (16 kHz, mono) of a 5-second segment → mel-spectrogram (STFT `n_fft=2048`, hop 160 → 100 Hz frame rate, 512 mel bins). The spectrogram is projected to the model dimension and used as a prefix condition.
+- **Output tokenization:** MT3-like note events; the 128 MIDI programs are mapped to **36 instrument subgroups** using the `MT3_FULL_PLUS` taxonomy. Decoding is greedy (argmax) by default, with optional classifier-free guidance (CFG).
+- **Inference:** audio is processed in 5-second chunks; note events are emitted in temporal order. Optional **instrument conditioning** stabilizes predictions across chunk boundaries and lets you restrict/customize the transcription (see below).
+
+**Note on the representation:** the tokenizer recovers onset/offset timing, pitch, and instrument, but **not velocity**. It also cannot represent two notes of the same pitch and instrument sounding at the same time. Drums are onset-only.
+
+## Model variants
+
+| Repo | Params | `dim` | heads | layers | Notes |
+|---|---|---|---|---|---|
+| [`muscriptor-small`](https://huggingface.co/MuScriptor/muscriptor-small) | ≈100M | 768 | 12 | 14 | smallest / fastest |
+| [`muscriptor-medium`](https://huggingface.co/MuScriptor/muscriptor-medium) | ≈300M | 1024 | 16 | 24 | **this model** · good trade-off |
+| [`muscriptor-large`](https://huggingface.co/MuScriptor/muscriptor-large) | ≈1.3B | 1536 | 24 | 48 | best quality |
+
+All variants share the same input pipeline, tokenizer, and training recipe; they differ only in latent dimension, attention heads, and depth.
+
+## Intended uses & limitations
+
+**Intended uses**
+- General-purpose transcription of real, multi-instrument music across genres (classical → heavy metal) into MIDI.
+- A building block for music information retrieval (chord/key recognition), musicological analysis, generative-modeling data pipelines, and tools for musicians.
+
+**Out of scope / use with care**
+- Not a substitute for a hand-annotated score; expect errors, especially on dense mixes, unusual timbres, and heavily processed audio.
+- Velocity/dynamics are **not** produced (see note above).
+- Onset/offset precision is lower for some styles (e.g. choral music), and exact offsets are inherently harder than onsets.
+
+**Limitations & biases**
+- Training data skews toward pop and Western classical music, and the instrument distribution is long-tailed (piano/guitar/bass/drums are most frequent). Rare instruments and underrepresented genres may be transcribed less reliably.
+- The fixed `MT3_FULL_PLUS` 36-group instrument taxonomy limits instrument granularity.
+- Simultaneous same-pitch/same-instrument notes cannot be represented by the tokenizer.
+
+## Instrument conditioning
+
+The model can be told which instrument groups are present in the track. Supplying the correct set improves quantitative scores and produces more coherent instrument assignments across segments.
+
+```python
+from muscriptor.tokenizer.mt3 import MT3_FULL_PLUS_GROUP_NAMES
+
+# `instrument_group` is a space-separated string of MT3_FULL_PLUS group IDs.
+# Convert readable group names to IDs:
+names = ["acoustic_piano", "acoustic_guitar", "acoustic_bass"]
+instrument_group = " ".join(str(MT3_FULL_PLUS_GROUP_NAMES[n]) for n in names)  # -> "0 4 7"
+
+# Only expect piano, acoustic guitar and bass in this track:
+model.transcribe_to_midi("audio.wav", instrument_group=instrument_group)
+```
+
+```bash
+muscriptor transcribe --model medium --instruments "acoustic_piano,acoustic_guitar,acoustic_bass" audio.wav -o out.mid
+muscriptor list-instruments   # show all available group names
+```
+
+## Evaluation
+
+Metrics are instrument-agnostic F1 scores computed with [`mir_eval`](https://github.com/craffel/mir_eval) on `D_Test`, the authors' held-out test set of 372 multi-instrument tracks.
+
+**Model-size comparison** (F1 ↑; from the paper's scaling study, models trained on `D_Real` only, CFG = 2):
+
+| Variant | Params | Onset | Frame | Offset | Drums | Multi |
+|---|---|---|---|---|---|---|
+| `muscriptor-small` | 100M | 51.2 | 67.2 | 38.7 | 41.5 | 38.2 |
+| **`muscriptor-medium`** | **300M** | **52.4** | **68.0** | **40.3** | **42.0** | **39.7** |
+| `muscriptor-large` | 1.3B | 53.2 | 68.7 | 41.0 | 42.5 | 40.5 |
+
+These numbers come from the model-size ablation, which trains on real audio **only**. The **released checkpoints additionally use synthetic pre-training and RL post-training**, which improve real-world quality substantially beyond these figures. See [`muscriptor-large`](https://huggingface.co/MuScriptor/muscriptor-large) and the paper for per-dataset results.
+
+## Citation
+
+```bibtex
+@inproceedings{muscriptor2026,
+  title     = {MuScriptor: An Open Model for Multi-Instrument Music Transcription},
+  author    = {Rouard, Simon and Krause, Michael and Roebel, Axel and
+               Simon-Gabriel, Carl-Johann and D{\'e}fossez, Alexandre},
+  year      = {2026},
+  note      = {Kyutai, Mirelo AI, IRCAM}
+}
+```
+
+<!-- TODO: replace with the final published citation (venue / arXiv id) once available. -->
+
+## License
+
+Code released under the [MIT License](https://github.com/muscriptor/muscriptor/blob/main/LICENSE). Weights released under CC-BY-NC.
+
+
+--- onnx/w4a32_optimized/config.json (1274 chars) ---
+{
+  "source_model": "MuScriptor/muscriptor-medium@f32236969308476e01fd3aae67357de5feb05a2d",
+  "dtype": "float32",
+  "activation_dtype": "float32",
+  "graph_activation_dtype": "float32",
+  "embedding_storage": "float32",
+  "lm_head_weight_storage": "float32",
+  "num_layers": 24,
+  "num_heads": 16,
+  "head_dim": 64,
+  "card": 1395,
+  "initial_token_id": 1395,
+  "eos_token_id": 1,
+  "first_reserved_token_id": 1393,
+  "attention": "com.microsoft.GroupQueryAttention",
+  "fused_attention_layers": 24,
+  "past_present_share_buffer": true,
+  "kv_cache_layout": "per-layer BNSH",
+  "max_cache_length": "runtime-defined",
+  "recommended_max_cache_length": 2504,
+  "max_position_length": 4096,
+  "position_embedding_storage": "float32 lookup table",
+  "decoder_output": "logits",
+  "greedy_in_graph": false,
+  "offline_transformer_fusions": {
+    "Gelu": 24,
+    "LayerNormalization": 1,
+    "SkipLayerNormalization": 48
+  },
+  "skip_layer_normalization": true,
+  "skip_layer_normalization_nodes": 48,
+  "backbone_weight_storage": "int4-RTN",
+  "quantization": "ORT MatMulNBits RTN",
+  "block_size": 32,
+  "quantized_backbone_matmuls": 96,
+  "quantized_lm_head_matmuls": 0,
+  "matmul_nbits_accuracy_level": 4,
+  "matmul_nbits_internal_compute": "dynamic-int8/int32-accumulate"
+}
+
+
+--- runtime/muscriptor_onnx/__init__.py (152 chars) ---
+"""ONNX export helpers for MuScriptor."""
+
+from .audio import log_mel_spectrogram, load_audio_16k
+
+__all__ = ["load_audio_16k", "log_mel_spectrogram"]
+
+
+
+--- runtime/muscriptor_onnx/audio.py (2765 chars) ---
+"""NumPy implementation of MuScriptor's 16 kHz log-mel frontend."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import soundfile as sf
+from scipy.signal import resample_poly
+
+
+SAMPLE_RATE = 16_000
+N_FFT = 2_048
+HOP_LENGTH = 160
+N_MELS = 512
+SEGMENT_SAMPLES = 5 * SAMPLE_RATE
+
+
+def load_audio_16k(path: str | Path) -> np.ndarray:
+    """Load an audio file as mono float32 at 16 kHz."""
+    audio, sample_rate = sf.read(path, dtype="float32", always_2d=True)
+    audio = audio.mean(axis=1)
+    if sample_rate != SAMPLE_RATE:
+        divisor = np.gcd(sample_rate, SAMPLE_RATE)
+        audio = resample_poly(
+            audio, SAMPLE_RATE // divisor, sample_rate // divisor
+        ).astype(np.float32)
+    return audio.astype(np.float32, copy=False)
+
+
+def first_five_second_chunk(audio: np.ndarray) -> np.ndarray:
+    """Crop/pad audio to the five-second chunk used by MuScriptor."""
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if audio.size >= SEGMENT_SAMPLES:
+        return audio[:SEGMENT_SAMPLES]
+    return np.pad(audio, (0, SEGMENT_SAMPLES - audio.size))
+
+
+def _hz_to_mel_htk(freq: np.ndarray) -> np.ndarray:
+    return 2595.0 * np.log10(1.0 + freq / 700.0)
+
+
+def _mel_to_hz_htk(mel: np.ndarray) -> np.ndarray:
+    return 700.0 * (10.0 ** (mel / 2595.0) - 1.0)
+
+
+def mel_filterbank() -> np.ndarray:
+    """Match the pure-torch HTK filterbank bundled with MuScriptor."""
+    all_freqs = np.linspace(0, SAMPLE_RATE // 2, N_FFT // 2 + 1, dtype=np.float32)
+    mel_min = _hz_to_mel_htk(np.asarray(0.0, dtype=np.float32))
+    mel_max = _hz_to_mel_htk(np.asarray(SAMPLE_RATE / 2, dtype=np.float32))
+    mel_points = np.linspace(mel_min, mel_max, N_MELS + 2, dtype=np.float32)
+    freq_points = _mel_to_hz_htk(mel_points)
+    freq_diff = freq_points[1:] - freq_points[:-1]
+    slopes = freq_points[None, :] - all_freqs[:, None]
+    down = -slopes[:, :-2] / freq_diff[:-1]
+    up = slopes[:, 2:] / freq_diff[1:]
+    return np.maximum(0.0, np.minimum(down, up)).astype(np.float32)
+
+
+def log_mel_spectrogram(audio: np.ndarray) -> np.ndarray:
+    """Return `[1, 501, 512]` log-mel features for a five-second chunk.
+
+    The reflection padding, periodic Hann window, FFT, HTK mel bank, and log
+    epsilon mirror ``muscriptor.modules.mel_spectrogram``.
+    """
+    audio = first_five_second_chunk(audio)
+    padded = np.pad(audio, (N_FFT // 2, N_FFT // 2), mode="reflect")
+    frames = np.lib.stride_tricks.sliding_window_view(padded, N_FFT)[::HOP_LENGTH]
+    window = np.hanning(N_FFT + 1)[:-1].astype(np.float32)
+    spectrum = np.abs(np.fft.rfft(frames * window, n=N_FFT, axis=-1)).astype(np.float32)
+    mel = spectrum @ mel_filterbank()
+    return np.log(mel + np.float32(1e-6))[None, ...].astype(np.float32)
+
+
+
+--- runtime/requirements.txt (60 chars) ---
+numpy>=1.26
+scipy>=1.11
+soundfile>=0.12
+onnxruntime>=1.26.0
+
+
+--- runtime/test_onnxruntime.py (11076 chars) ---
+#!/usr/bin/env python3
+"""Run cached autoregressive MuScriptor inference with ONNX Runtime."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
+from pathlib import Path
+
+import numpy as np
+# Importing PyTorch first preloads the CUDA/cuDNN shared libraries shipped in
+# the uv environment when available; CPU-only users do not need PyTorch.
+try:
+    import torch  # noqa: F401
+except ModuleNotFoundError:
+    torch = None  # type: ignore[assignment]
+import onnxruntime as ort
+
+from muscriptor_onnx.audio import SAMPLE_RATE, load_audio_16k, log_mel_spectrogram
+
+
+def device_value(
+    array: np.ndarray,
+    device_type: str,
+    device_id: int,
+) -> ort.OrtValue:
+    return ort.OrtValue.ortvalue_from_numpy(array, device_type, device_id)
+
+
+def run_shared_gqa(
+    decoder: ort.InferenceSession,
+    feeds: dict[str, ort.OrtValue],
+    caches: dict[str, ort.OrtValue],
+    layers: int,
+    device_type: str,
+    device_id: int,
+) -> np.ndarray:
+    """Run fused GQA while aliasing every present cache to its past cache."""
+    binding = decoder.io_binding()
+    for name, value in feeds.items():
+        binding.bind_ortvalue_input(name, value)
+    for name, value in caches.items():
+        binding.bind_ortvalue_input(name, value)
+    binding.bind_output("logits", device_type, device_id)
+    for layer_index in range(layers):
+        binding.bind_ortvalue_output(
+            f"present_key.{layer_index}", caches[f"past_key.{layer_index}"]
+        )
+        binding.bind_ortvalue_output(
+            f"present_value.{layer_index}", caches[f"past_value.{layer_index}"]
+        )
+    decoder.run_with_iobinding(binding)
+    return binding.get_outputs()[0].numpy()
+
+
+def providers(requested: str, device_id: int) -> list:
+    available = ort.get_available_providers()
+    if requested == "cuda" or (requested == "auto" and "CUDAExecutionProvider" in available):
+        if "CUDAExecutionProvider" not in available:
+            raise RuntimeError(f"CUDA EP unavailable; installed providers: {available}")
+        return [("CUDAExecutionProvider", {"device_id": device_id}), "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]
+
+
+def session(
+    path: Path,
+    selected_providers: list,
+    profile_prefix: str | None = None,
+    intra_op_threads: int = 0,
+    inter_op_threads: int = 0,
+) -> ort.InferenceSession:
+    options = ort.SessionOptions()
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    if intra_op_threads > 0:
+        options.intra_op_num_threads = intra_op_threads
+    if inter_op_threads > 0:
+        options.inter_op_num_threads = inter_op_threads
+    if profile_prefix is not None:
+        options.enable_profiling = True
+        options.profile_file_prefix = profile_prefix
+    result = ort.InferenceSession(path, sess_options=options, providers=selected_providers)
+    requested_cuda = bool(selected_providers) and (
+        selected_providers[0] == "CUDAExecutionProvider"
+        or (
+            isinstance(selected_providers[0], tuple)
+            and selected_providers[0][0] == "CUDAExecutionProvider"
+        )
+    )
+    if requested_cuda and "CUDAExecutionProvider" not in result.get_providers():
+        raise RuntimeError("CUDA EP was requested but session creation fell back to CPU")
+    return result
+
+
+def activation_numpy_dtype(metadata: dict) -> np.dtype:
+    dtype_name = metadata.get("activation_dtype", metadata.get("dtype"))
+    try:
+        return {
+            "float32": np.dtype(np.float32),
+            "float16": np.dtype(np.float16),
+        }[dtype_name]
+    except KeyError as error:
+        raise ValueError(f"unsupported activation dtype: {dtype_name!r}") from error
+
+
+def causal_mask(
+    query_length: int,
+    past_length: int,
+    dtype: np.dtype = np.dtype(np.float16),
+) -> np.ndarray:
+    query_positions = past_length + np.arange(query_length)[:, None]
+    key_positions = np.arange(past_length + query_length)[None, :]
+    masked_value = -65504.0 if dtype == np.dtype(np.float16) else -1.0e9
+    return np.where(key_positions <= query_positions, 0.0, masked_value).astype(dtype)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-dir", type=Path, required=True)
+    parser.add_argument("--audio", type=Path)
+    parser.add_argument("--provider", choices=("auto", "cuda", "cpu"), default="auto")
+    parser.add_argument("--device-id", type=int, default=0)
+    parser.add_argument("--max-new-tokens", type=int, default=8)
+    parser.add_argument("--max-cache-length", type=int, default=2504)
+    parser.add_argument("--intra-op-threads", type=int, default=0)
+    parser.add_argument("--inter-op-threads", type=int, default=1)
+    parser.add_argument(
+        "--instrument-id",
+        type=int,
+        action="append",
+        help="Optional MT3_FULL_PLUS group ID; repeat for multiple groups",
+    )
+    args = parser.parse_args()
+
+    metadata = json.loads((args.model_dir / "config.json").read_text())
+    activation_dtype = activation_numpy_dtype(metadata)
+    selected = providers(args.provider, args.device_id)
+    conditioner = session(
+        args.model_dir / "conditioner.onnx",
+        selected,
+        intra_op_threads=args.intra_op_threads,
+        inter_op_threads=args.inter_op_threads,
+    )
+    decoder = session(
+        args.model_dir / "decoder.onnx",
+        selected,
+        intra_op_threads=args.intra_op_threads,
+        inter_op_threads=args.inter_op_threads,
+    )
+
+    if args.audio:
+        audio = load_audio_16k(args.audio)
+        source = str(args.audio)
+    else:
+        # Deterministic smoke-test input; it only tests execution, not quality.
+        time_axis = np.arange(5 * SAMPLE_RATE, dtype=np.float32) / SAMPLE_RATE
+        audio = (0.1 * np.sin(2 * np.pi * 440.0 * time_axis)).astype(np.float32)
+        source = "generated 440 Hz sine"
+    mel = log_mel_spectrogram(audio).astype(activation_dtype)
+    instrument_ids = np.asarray(
+        [args.instrument_id if args.instrument_id is not None else [-1]], dtype=np.int64
+    )
+    dataset_ids = np.asarray([[-1]], dtype=np.int64)
+
+    start = time.perf_counter()
+    condition = conditioner.run(
+        ["condition_embeddings"],
+        {
+            "log_mel": mel,
+            "instrument_ids": instrument_ids,
+            "dataset_ids": dataset_ids,
+        },
+    )[0]
+    condition_seconds = time.perf_counter() - start
+
+    layers = metadata["num_layers"]
+    heads = metadata["num_heads"]
+    head_dim = metadata["head_dim"]
+    fused_gqa = "past_key.0" in {value.name for value in decoder.get_inputs()}
+    active = decoder.get_providers()
+    device_type = "cuda" if active[0] == "CUDAExecutionProvider" else "cpu"
+    if fused_gqa:
+        cache_bytes = (
+            layers
+            * 2
+            * heads
+            * args.max_cache_length
+            * head_dim
+            * activation_dtype.itemsize
+        )
+        caches = {
+            f"past_{kind}.{layer}": device_value(
+                np.zeros(
+                    (1, heads, args.max_cache_length, head_dim),
+                    dtype=activation_dtype,
+                ),
+                device_type,
+                args.device_id,
+            )
+            for layer in range(layers)
+            for kind in ("key", "value")
+        }
+    else:
+        past_key = np.zeros(
+            (layers, 1, heads, 0, head_dim), dtype=activation_dtype
+        )
+        past_value = np.zeros_like(past_key)
+    input_ids = np.asarray([[metadata["initial_token_id"]]], dtype=np.int64)
+    generated: list[int] = []
+    decode_times: list[float] = []
+
+    for step in range(args.max_new_tokens):
+        prefix = condition if step == 0 else np.empty(
+            (1, 0, heads * head_dim), activation_dtype
+        )
+        query_length = prefix.shape[1] + input_ids.shape[1]
+        tick = time.perf_counter()
+        if fused_gqa:
+            past_length = 0 if step == 0 else condition.shape[1] + step
+            total_length = past_length + query_length
+            if total_length > args.max_cache_length:
+                raise ValueError(
+                    f"sequence length {total_length} exceeds --max-cache-length "
+                    f"{args.max_cache_length}"
+                )
+            feeds = {
+                "input_ids": device_value(input_ids, device_type, args.device_id),
+                "condition_embeddings": device_value(prefix, device_type, args.device_id),
+                "position_ids": device_value(
+                    np.arange(past_length, total_length, dtype=np.int64)[None, :],
+                    device_type,
+                    args.device_id,
+                ),
+                "seqlens_k": device_value(
+                    np.asarray([total_length - 1], dtype=np.int32),
+                    device_type,
+                    args.device_id,
+                ),
+                "total_sequence_length": device_value(
+                    np.asarray(total_length, dtype=np.int32),
+                    device_type,
+                    args.device_id,
+                ),
+            }
+            logits = run_shared_gqa(
+                decoder, feeds, caches, layers, device_type, args.device_id
+            )
+        else:
+            mask = causal_mask(query_length, past_key.shape[3], activation_dtype)
+            logits, past_key, past_value = decoder.run(
+                ("logits", "present_key", "present_value"),
+                {
+                    "input_ids": input_ids,
+                    "condition_embeddings": prefix,
+                    "past_key": past_key,
+                    "past_value": past_value,
+                    "attention_mask": mask,
+                },
+            )
+        decode_times.append(time.perf_counter() - tick)
+        if not np.isfinite(logits).all():
+            raise RuntimeError("decoder produced non-finite logits")
+        logits[:, metadata["first_reserved_token_id"] :] = -np.inf
+        token = int(logits.argmax(axis=-1)[0])
+        generated.append(token)
+        input_ids = np.asarray([[token]], dtype=np.int64)
+        if token == metadata["eos_token_id"]:
+            break
+
+    sizes = {
+        path.name: path.stat().st_size
+        for path in args.model_dir.iterdir()
+        if path.is_file() and (path.suffix == ".onnx" or path.name.endswith(".onnx.data"))
+    }
+    sizes["total"] = sum(sizes.values())
+    print(f"model:             {args.model_dir}")
+    print(f"audio:             {source}")
+    print(f"providers:         {active}")
+    print(f"mel shape:         {mel.shape}")
+    print(f"condition shape:   {condition.shape}")
+    if fused_gqa:
+        print(
+            "shared KV cache:   "
+            f"{args.max_cache_length} positions, {cache_bytes / 2**20:.1f} MiB"
+        )
+    else:
+        print(f"final KV shape:    {past_key.shape}")
+    print(f"generated tokens:  {generated}")
+    print(f"condition latency: {condition_seconds * 1000:.1f} ms")
+    print(f"decode latency:    {[round(x * 1000, 1) for x in decode_times]} ms")
+    print(f"ONNX file sizes:   {sizes}")
+
+
+if __name__ == "__main__":
+    main()
+
+
+ONNX GRAPHS
+{
+  "file": "onnx/w4a32_optimized/conditioner.onnx",
+  "ir_version": 9,
+  "opsets": [
+    {
+      "domain": "",
+      "version": 20
+    }
+  ],
+  "inputs": [
+    {
+      "name": "log_mel",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        "mel_frames",
+        512
+      ]
+    },
+    {
+      "name": "instrument_ids",
+      "dtype": "INT64",
+      "shape": [
+        "batch",
+        "instrument_count"
+      ]
+    },
+    {
+      "name": "dataset_ids",
+      "dtype": "INT64",
+      "shape": [
+        "batch",
+        "dataset_count"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "condition_embeddings",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        "condition_length",
+        1024
+      ]
+    }
+  ],
+  "node_count": 9,
+  "initializer_count": 4,
+  "ops": {
+    "Add": 3,
+    "Constant": 2,
+    "Gather": 2,
+    "MatMul": 1,
+    "Concat": 1
+  },
+  "external_initializer_count": 0,
+  "external_initializers_sample": []
+}
+{
+  "file": "onnx/w4a32_optimized/decoder.onnx",
+  "ir_version": 9,
+  "opsets": [
+    {
+      "domain": "",
+      "version": 20
+    },
+    {
+      "domain": "com.microsoft",
+      "version": 1
+    }
+  ],
+  "inputs": [
+    {
+      "name": "input_ids",
+      "dtype": "INT64",
+      "shape": [
+        "batch",
+        "token_length"
+      ]
+    },
+    {
+      "name": "condition_embeddings",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        "condition_length",
+        1024
+      ]
+    },
+    {
+      "name": "past_key.0",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.0",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.1",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.1",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.2",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.2",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.3",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.3",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.4",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.4",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.5",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.5",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.6",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.6",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.7",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.7",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.8",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.8",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.9",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.9",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.10",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.10",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.11",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.11",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.12",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.12",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.13",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.13",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.14",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.14",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.15",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.15",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.16",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.16",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.17",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.17",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.18",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.18",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.19",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.19",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.20",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.20",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.21",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.21",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.22",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.22",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_key.23",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "past_value.23",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "position_ids",
+      "dtype": "INT64",
+      "shape": [
+        "batch",
+        "query_length"
+      ]
+    },
+    {
+      "name": "seqlens_k",
+      "dtype": "INT32",
+      "shape": [
+        "batch"
+      ]
+    },
+    {
+      "name": "total_sequence_length",
+      "dtype": "INT32",
+      "shape": []
+    }
+  ],
+  "outputs": [
+    {
+      "name": "logits",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        1395
+      ]
+    },
+    {
+      "name": "present_key.0",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.0",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.1",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.1",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.2",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.2",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.3",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.3",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.4",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.4",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.5",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.5",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.6",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.6",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.7",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.7",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.8",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.8",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.9",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.9",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.10",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.10",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.11",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.11",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.12",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.12",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.13",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.13",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.14",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.14",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.15",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.15",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.16",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.16",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.17",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.17",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.18",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.18",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.19",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.19",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.20",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.20",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.21",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.21",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.22",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.22",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_key.23",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    },
+    {
+      "name": "present_value.23",
+      "dtype": "FLOAT",
+      "shape": [
+        "batch",
+        16,
+        "max_sequence_length",
+        64
+      ]
+    }
+  ],
+  "node_count": 205,
+  "initializer_count": 293,
+  "ops": {
+    "MatMulNBits": 96,
+    "SkipLayerNormalization": 48,
+    "GroupQueryAttention": 24,
+    "Gelu": 24,
+    "Constant": 5,
+    "Gather": 3,
+    "Concat": 1,
+    "Add": 1,
+    "Slice": 1,
+    "LayerNormalization": 1,
+    "MatMul": 1
+  },
+  "external_initializer_count": 293,
+  "external_initializers_sample": [
+    {
+      "name": "token_embedding.weight",
+      "dims": [
+        1396,
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "0",
+        "length": "5718016"
+      }
+    },
+    {
+      "name": "layers.0.norm1.weight",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5718016",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.0.norm1.bias",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5722112",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.0.norm2.weight",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5726208",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.0.norm2.bias",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5730304",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.1.norm1.weight",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5734400",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.1.norm1.bias",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5738496",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.1.norm2.weight",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5742592",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.1.norm2.bias",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5746688",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.2.norm1.weight",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5750784",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.2.norm1.bias",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5754880",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.2.norm2.weight",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5758976",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.2.norm2.bias",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5763072",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.3.norm1.weight",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5767168",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.3.norm1.bias",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5771264",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.3.norm2.weight",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5775360",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.3.norm2.bias",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5779456",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.4.norm1.weight",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5783552",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.4.norm1.bias",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5787648",
+        "length": "4096"
+      }
+    },
+    {
+      "name": "layers.4.norm2.weight",
+      "dims": [
+        1024
+      ],
+      "dtype": "FLOAT",
+      "external_data": {
+        "location": "decoder.onnx.data",
+        "offset": "5791744",
+        "length": "4096"
+      }
+    }
+  ]
+}
