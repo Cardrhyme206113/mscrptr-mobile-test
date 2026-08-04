@@ -28,25 +28,25 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare release asset
-        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.1.0.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.1.1.apk
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.1.0 --cleanup-tag --yes || true
-          gh release create v0.1.0 \
-            MuScriptor-Mobile-v0.1.0.apk \
+          gh release delete v0.1.1 --cleanup-tag --yes || true
+          gh release create v0.1.1 \
+            MuScriptor-Mobile-v0.1.1.apk \
             --target "$GITHUB_SHA" \
-            --title "MuScriptor Mobile v0.1.0" \
-            --notes "Initial Android ARM64 test build for on-device MuScriptor Medium W4A32 ONNX inference. Includes anonymous model download, live streaming piano-roll events, and MIDI export. This is an unsigned debug build intended for testing on the Xiaomi 14T Pro."
+            --title "MuScriptor Mobile v0.1.1" \
+            --notes "Low-memory stability update for Xiaomi 14T Pro testing. Uses 1024/896/768-position KV-cache profiles and cleanly ends a chunk when the selected cache fills instead of crashing at position N+1. Existing downloaded model files are reused."
 
       - name: Persist release link
         run: |
           mkdir -p ci
-          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.1.0' > ci/release-url.txt
+          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.1.1' > ci/release-url.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add ci/release-url.txt
-          git commit -m "docs: record v0.1.0 release URL" || exit 0
+          git commit -m "docs: record v0.1.1 release URL" || exit 0
           git push
