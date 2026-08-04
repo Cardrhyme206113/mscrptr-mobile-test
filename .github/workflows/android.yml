@@ -44,7 +44,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Generate and test cache decoder variants
+      - name: Generate, test, and benchmark cache decoders
         shell: bash
         run: |
           set -euo pipefail
@@ -67,6 +67,12 @@ jobs:
             --variants app/src/main/assets/cache_decoders \
             --external-data .cache/muscriptor/decoder.onnx.data \
             --max-cache 512
+          python tools/benchmark_gqa_cache.py \
+            --decoder .cache/muscriptor/decoder.onnx \
+            --variants app/src/main/assets/cache_decoders \
+            --external-data .cache/muscriptor/decoder.onnx.data \
+            --max-cache 768 \
+            --steps 10 | tee ci/cache-benchmark.txt
           ls -lh app/src/main/assets/cache_decoders
 
       - name: Build and test
@@ -102,8 +108,8 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add ci/android-build-report.txt ci/decoder-graph.txt
-          git commit -m "ci: update native-cache Android build report" || exit 0
+          git add ci/android-build-report.txt ci/decoder-graph.txt ci/cache-benchmark.txt
+          git commit -m "ci: update native-cache benchmark and Android report" || exit 0
           git push
 
       - name: Fail when build failed
