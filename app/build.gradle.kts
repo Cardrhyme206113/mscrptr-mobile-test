@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "dev.cardrhyme.muscriptormobile"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "dev.cardrhyme.muscriptormobile"
