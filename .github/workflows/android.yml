@@ -56,6 +56,7 @@ jobs:
           curl -L --fail --retry 4 --retry-delay 2 \
             -o .cache/muscriptor/decoder.onnx.data \
             'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx.data?download=true'
+          python tools/inspect_decoder_graph.py --decoder .cache/muscriptor/decoder.onnx | tee decoder-graph.txt
           python tools/generate_cache_variants.py \
             --decoder .cache/muscriptor/decoder.onnx \
             --output app/src/main/assets/cache_decoders
@@ -78,6 +79,8 @@ jobs:
             echo "exit_code=$code"
             echo "commit=${GITHUB_SHA}"
             echo "generated_at=$(date -u +%FT%TZ)"
+            echo
+            cat decoder-graph.txt 2>/dev/null || true
             echo
             tail -n 600 build.log
           } > ci/android-build-report.txt
