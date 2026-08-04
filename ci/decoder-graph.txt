@@ -1,0 +1,208 @@
+opsets: [('', 20), ('com.microsoft', 1)]
+operator counts:
+  ai.onnx::Add = 1
+  ai.onnx::Concat = 1
+  ai.onnx::Constant = 5
+  ai.onnx::Gather = 3
+  ai.onnx::Gelu = 24
+  ai.onnx::LayerNormalization = 1
+  ai.onnx::MatMul = 1
+  ai.onnx::Slice = 1
+  com.microsoft::GroupQueryAttention = 24
+  com.microsoft::MatMulNBits = 96
+  com.microsoft::SkipLayerNormalization = 48
+cache paths:
+  past_key.0: ['com.microsoft::GroupQueryAttention:/layers.0/GroupQueryAttention']
+  past_value.0: ['com.microsoft::GroupQueryAttention:/layers.0/GroupQueryAttention']
+  past_key.1: ['com.microsoft::GroupQueryAttention:/layers.1/GroupQueryAttention']
+  past_value.1: ['com.microsoft::GroupQueryAttention:/layers.1/GroupQueryAttention']
+  past_key.2: ['com.microsoft::GroupQueryAttention:/layers.2/GroupQueryAttention']
+  past_value.2: ['com.microsoft::GroupQueryAttention:/layers.2/GroupQueryAttention']
+  past_key.3: ['com.microsoft::GroupQueryAttention:/layers.3/GroupQueryAttention']
+  past_value.3: ['com.microsoft::GroupQueryAttention:/layers.3/GroupQueryAttention']
+  past_key.4: ['com.microsoft::GroupQueryAttention:/layers.4/GroupQueryAttention']
+  past_value.4: ['com.microsoft::GroupQueryAttention:/layers.4/GroupQueryAttention']
+  past_key.5: ['com.microsoft::GroupQueryAttention:/layers.5/GroupQueryAttention']
+  past_value.5: ['com.microsoft::GroupQueryAttention:/layers.5/GroupQueryAttention']
+  past_key.6: ['com.microsoft::GroupQueryAttention:/layers.6/GroupQueryAttention']
+  past_value.6: ['com.microsoft::GroupQueryAttention:/layers.6/GroupQueryAttention']
+  past_key.7: ['com.microsoft::GroupQueryAttention:/layers.7/GroupQueryAttention']
+  past_value.7: ['com.microsoft::GroupQueryAttention:/layers.7/GroupQueryAttention']
+  past_key.8: ['com.microsoft::GroupQueryAttention:/layers.8/GroupQueryAttention']
+  past_value.8: ['com.microsoft::GroupQueryAttention:/layers.8/GroupQueryAttention']
+  past_key.9: ['com.microsoft::GroupQueryAttention:/layers.9/GroupQueryAttention']
+  past_value.9: ['com.microsoft::GroupQueryAttention:/layers.9/GroupQueryAttention']
+  past_key.10: ['com.microsoft::GroupQueryAttention:/layers.10/GroupQueryAttention']
+  past_value.10: ['com.microsoft::GroupQueryAttention:/layers.10/GroupQueryAttention']
+  past_key.11: ['com.microsoft::GroupQueryAttention:/layers.11/GroupQueryAttention']
+  past_value.11: ['com.microsoft::GroupQueryAttention:/layers.11/GroupQueryAttention']
+  past_key.12: ['com.microsoft::GroupQueryAttention:/layers.12/GroupQueryAttention']
+  past_value.12: ['com.microsoft::GroupQueryAttention:/layers.12/GroupQueryAttention']
+  past_key.13: ['com.microsoft::GroupQueryAttention:/layers.13/GroupQueryAttention']
+  past_value.13: ['com.microsoft::GroupQueryAttention:/layers.13/GroupQueryAttention']
+  past_key.14: ['com.microsoft::GroupQueryAttention:/layers.14/GroupQueryAttention']
+  past_value.14: ['com.microsoft::GroupQueryAttention:/layers.14/GroupQueryAttention']
+  past_key.15: ['com.microsoft::GroupQueryAttention:/layers.15/GroupQueryAttention']
+  past_value.15: ['com.microsoft::GroupQueryAttention:/layers.15/GroupQueryAttention']
+  past_key.16: ['com.microsoft::GroupQueryAttention:/layers.16/GroupQueryAttention']
+  past_value.16: ['com.microsoft::GroupQueryAttention:/layers.16/GroupQueryAttention']
+  past_key.17: ['com.microsoft::GroupQueryAttention:/layers.17/GroupQueryAttention']
+  past_value.17: ['com.microsoft::GroupQueryAttention:/layers.17/GroupQueryAttention']
+  past_key.18: ['com.microsoft::GroupQueryAttention:/layers.18/GroupQueryAttention']
+  past_value.18: ['com.microsoft::GroupQueryAttention:/layers.18/GroupQueryAttention']
+  past_key.19: ['com.microsoft::GroupQueryAttention:/layers.19/GroupQueryAttention']
+  past_value.19: ['com.microsoft::GroupQueryAttention:/layers.19/GroupQueryAttention']
+  past_key.20: ['com.microsoft::GroupQueryAttention:/layers.20/GroupQueryAttention']
+  past_value.20: ['com.microsoft::GroupQueryAttention:/layers.20/GroupQueryAttention']
+  past_key.21: ['com.microsoft::GroupQueryAttention:/layers.21/GroupQueryAttention']
+  past_value.21: ['com.microsoft::GroupQueryAttention:/layers.21/GroupQueryAttention']
+  past_key.22: ['com.microsoft::GroupQueryAttention:/layers.22/GroupQueryAttention']
+  past_value.22: ['com.microsoft::GroupQueryAttention:/layers.22/GroupQueryAttention']
+  past_key.23: ['com.microsoft::GroupQueryAttention:/layers.23/GroupQueryAttention']
+  past_value.23: ['com.microsoft::GroupQueryAttention:/layers.23/GroupQueryAttention']
+attention-like nodes:
+  [10] com.microsoft::GroupQueryAttention:/layers.0/GroupQueryAttention
+    inputs=['/MatMul_output_0', '', '', 'past_key.0', 'past_value.0', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_1_output_0', 'present_key.0', 'present_value.0']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [18] com.microsoft::GroupQueryAttention:/layers.1/GroupQueryAttention
+    inputs=['/MatMul_3_output_0', '', '', 'past_key.1', 'past_value.1', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_3_output_0', 'present_key.1', 'present_value.1']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [26] com.microsoft::GroupQueryAttention:/layers.2/GroupQueryAttention
+    inputs=['/MatMul_6_output_0', '', '', 'past_key.2', 'past_value.2', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_5_output_0', 'present_key.2', 'present_value.2']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [34] com.microsoft::GroupQueryAttention:/layers.3/GroupQueryAttention
+    inputs=['/MatMul_9_output_0', '', '', 'past_key.3', 'past_value.3', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_7_output_0', 'present_key.3', 'present_value.3']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [42] com.microsoft::GroupQueryAttention:/layers.4/GroupQueryAttention
+    inputs=['/MatMul_12_output_0', '', '', 'past_key.4', 'past_value.4', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_9_output_0', 'present_key.4', 'present_value.4']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [50] com.microsoft::GroupQueryAttention:/layers.5/GroupQueryAttention
+    inputs=['/MatMul_15_output_0', '', '', 'past_key.5', 'past_value.5', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_11_output_0', 'present_key.5', 'present_value.5']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [58] com.microsoft::GroupQueryAttention:/layers.6/GroupQueryAttention
+    inputs=['/MatMul_18_output_0', '', '', 'past_key.6', 'past_value.6', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_13_output_0', 'present_key.6', 'present_value.6']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [66] com.microsoft::GroupQueryAttention:/layers.7/GroupQueryAttention
+    inputs=['/MatMul_21_output_0', '', '', 'past_key.7', 'past_value.7', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_15_output_0', 'present_key.7', 'present_value.7']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [74] com.microsoft::GroupQueryAttention:/layers.8/GroupQueryAttention
+    inputs=['/MatMul_24_output_0', '', '', 'past_key.8', 'past_value.8', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_17_output_0', 'present_key.8', 'present_value.8']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [82] com.microsoft::GroupQueryAttention:/layers.9/GroupQueryAttention
+    inputs=['/MatMul_27_output_0', '', '', 'past_key.9', 'past_value.9', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_19_output_0', 'present_key.9', 'present_value.9']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [90] com.microsoft::GroupQueryAttention:/layers.10/GroupQueryAttention
+    inputs=['/MatMul_30_output_0', '', '', 'past_key.10', 'past_value.10', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_21_output_0', 'present_key.10', 'present_value.10']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [98] com.microsoft::GroupQueryAttention:/layers.11/GroupQueryAttention
+    inputs=['/MatMul_33_output_0', '', '', 'past_key.11', 'past_value.11', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_23_output_0', 'present_key.11', 'present_value.11']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [106] com.microsoft::GroupQueryAttention:/layers.12/GroupQueryAttention
+    inputs=['/MatMul_36_output_0', '', '', 'past_key.12', 'past_value.12', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_25_output_0', 'present_key.12', 'present_value.12']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [114] com.microsoft::GroupQueryAttention:/layers.13/GroupQueryAttention
+    inputs=['/MatMul_39_output_0', '', '', 'past_key.13', 'past_value.13', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_27_output_0', 'present_key.13', 'present_value.13']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [122] com.microsoft::GroupQueryAttention:/layers.14/GroupQueryAttention
+    inputs=['/MatMul_42_output_0', '', '', 'past_key.14', 'past_value.14', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_29_output_0', 'present_key.14', 'present_value.14']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [130] com.microsoft::GroupQueryAttention:/layers.15/GroupQueryAttention
+    inputs=['/MatMul_45_output_0', '', '', 'past_key.15', 'past_value.15', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_31_output_0', 'present_key.15', 'present_value.15']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [138] com.microsoft::GroupQueryAttention:/layers.16/GroupQueryAttention
+    inputs=['/MatMul_48_output_0', '', '', 'past_key.16', 'past_value.16', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_33_output_0', 'present_key.16', 'present_value.16']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [146] com.microsoft::GroupQueryAttention:/layers.17/GroupQueryAttention
+    inputs=['/MatMul_51_output_0', '', '', 'past_key.17', 'past_value.17', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_35_output_0', 'present_key.17', 'present_value.17']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [154] com.microsoft::GroupQueryAttention:/layers.18/GroupQueryAttention
+    inputs=['/MatMul_54_output_0', '', '', 'past_key.18', 'past_value.18', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_37_output_0', 'present_key.18', 'present_value.18']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [162] com.microsoft::GroupQueryAttention:/layers.19/GroupQueryAttention
+    inputs=['/MatMul_57_output_0', '', '', 'past_key.19', 'past_value.19', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_39_output_0', 'present_key.19', 'present_value.19']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [170] com.microsoft::GroupQueryAttention:/layers.20/GroupQueryAttention
+    inputs=['/MatMul_60_output_0', '', '', 'past_key.20', 'past_value.20', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_41_output_0', 'present_key.20', 'present_value.20']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [178] com.microsoft::GroupQueryAttention:/layers.21/GroupQueryAttention
+    inputs=['/MatMul_63_output_0', '', '', 'past_key.21', 'past_value.21', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_43_output_0', 'present_key.21', 'present_value.21']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [186] com.microsoft::GroupQueryAttention:/layers.22/GroupQueryAttention
+    inputs=['/MatMul_66_output_0', '', '', 'past_key.22', 'past_value.22', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_45_output_0', 'present_key.22', 'present_value.22']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+  [194] com.microsoft::GroupQueryAttention:/layers.23/GroupQueryAttention
+    inputs=['/MatMul_69_output_0', '', '', 'past_key.23', 'past_value.23', 'seqlens_k', 'total_sequence_length']
+    outputs=['/Reshape_47_output_0', 'present_key.23', 'present_value.23']
+    attrs=[('kv_num_heads', 16), ('num_heads', 16)]
+cache output producers:
+  present_key.0: com.microsoft::GroupQueryAttention:/layers.0/GroupQueryAttention
+  present_value.0: com.microsoft::GroupQueryAttention:/layers.0/GroupQueryAttention
+  present_key.1: com.microsoft::GroupQueryAttention:/layers.1/GroupQueryAttention
+  present_value.1: com.microsoft::GroupQueryAttention:/layers.1/GroupQueryAttention
+  present_key.2: com.microsoft::GroupQueryAttention:/layers.2/GroupQueryAttention
+  present_value.2: com.microsoft::GroupQueryAttention:/layers.2/GroupQueryAttention
+  present_key.3: com.microsoft::GroupQueryAttention:/layers.3/GroupQueryAttention
+  present_value.3: com.microsoft::GroupQueryAttention:/layers.3/GroupQueryAttention
+  present_key.4: com.microsoft::GroupQueryAttention:/layers.4/GroupQueryAttention
+  present_value.4: com.microsoft::GroupQueryAttention:/layers.4/GroupQueryAttention
+  present_key.5: com.microsoft::GroupQueryAttention:/layers.5/GroupQueryAttention
+  present_value.5: com.microsoft::GroupQueryAttention:/layers.5/GroupQueryAttention
+  present_key.6: com.microsoft::GroupQueryAttention:/layers.6/GroupQueryAttention
+  present_value.6: com.microsoft::GroupQueryAttention:/layers.6/GroupQueryAttention
+  present_key.7: com.microsoft::GroupQueryAttention:/layers.7/GroupQueryAttention
+  present_value.7: com.microsoft::GroupQueryAttention:/layers.7/GroupQueryAttention
+  present_key.8: com.microsoft::GroupQueryAttention:/layers.8/GroupQueryAttention
+  present_value.8: com.microsoft::GroupQueryAttention:/layers.8/GroupQueryAttention
+  present_key.9: com.microsoft::GroupQueryAttention:/layers.9/GroupQueryAttention
+  present_value.9: com.microsoft::GroupQueryAttention:/layers.9/GroupQueryAttention
+  present_key.10: com.microsoft::GroupQueryAttention:/layers.10/GroupQueryAttention
+  present_value.10: com.microsoft::GroupQueryAttention:/layers.10/GroupQueryAttention
+  present_key.11: com.microsoft::GroupQueryAttention:/layers.11/GroupQueryAttention
+  present_value.11: com.microsoft::GroupQueryAttention:/layers.11/GroupQueryAttention
+  present_key.12: com.microsoft::GroupQueryAttention:/layers.12/GroupQueryAttention
+  present_value.12: com.microsoft::GroupQueryAttention:/layers.12/GroupQueryAttention
+  present_key.13: com.microsoft::GroupQueryAttention:/layers.13/GroupQueryAttention
+  present_value.13: com.microsoft::GroupQueryAttention:/layers.13/GroupQueryAttention
+  present_key.14: com.microsoft::GroupQueryAttention:/layers.14/GroupQueryAttention
+  present_value.14: com.microsoft::GroupQueryAttention:/layers.14/GroupQueryAttention
+  present_key.15: com.microsoft::GroupQueryAttention:/layers.15/GroupQueryAttention
+  present_value.15: com.microsoft::GroupQueryAttention:/layers.15/GroupQueryAttention
+  present_key.16: com.microsoft::GroupQueryAttention:/layers.16/GroupQueryAttention
+  present_value.16: com.microsoft::GroupQueryAttention:/layers.16/GroupQueryAttention
+  present_key.17: com.microsoft::GroupQueryAttention:/layers.17/GroupQueryAttention
+  present_value.17: com.microsoft::GroupQueryAttention:/layers.17/GroupQueryAttention
+  present_key.18: com.microsoft::GroupQueryAttention:/layers.18/GroupQueryAttention
+  present_value.18: com.microsoft::GroupQueryAttention:/layers.18/GroupQueryAttention
+  present_key.19: com.microsoft::GroupQueryAttention:/layers.19/GroupQueryAttention
+  present_value.19: com.microsoft::GroupQueryAttention:/layers.19/GroupQueryAttention
+  present_key.20: com.microsoft::GroupQueryAttention:/layers.20/GroupQueryAttention
+  present_value.20: com.microsoft::GroupQueryAttention:/layers.20/GroupQueryAttention
+  present_key.21: com.microsoft::GroupQueryAttention:/layers.21/GroupQueryAttention
+  present_value.21: com.microsoft::GroupQueryAttention:/layers.21/GroupQueryAttention
+  present_key.22: com.microsoft::GroupQueryAttention:/layers.22/GroupQueryAttention
+  present_value.22: com.microsoft::GroupQueryAttention:/layers.22/GroupQueryAttention
+  present_key.23: com.microsoft::GroupQueryAttention:/layers.23/GroupQueryAttention
+  present_value.23: com.microsoft::GroupQueryAttention:/layers.23/GroupQueryAttention

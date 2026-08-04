@@ -1,6 +1,6 @@
 exit_code=0
-commit=6b5836310b2a6cb6020181f1a60d6850dac18d67
-generated_at=2026-08-04T17:40:39Z
+commit=4b6affdbe98ebbb5bfeda0e2f7b9f73cb3daeab5
+generated_at=2026-08-04T17:50:31Z
 
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.11.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
 Daemon will be stopped at the end of the build 
@@ -12,35 +12,28 @@ Daemon will be stopped at the end of the build
 > Task :app:mapDebugSourceSetPaths
 > Task :app:generateDebugResources
 > Task :app:packageDebugResources
+> Task :app:mergeDebugResources
 > Task :app:createDebugCompatibleScreenManifests
 > Task :app:extractDeepLinksDebug
 > Task :app:parseDebugLocalResources
-> Task :app:mergeDebugResources
 > Task :app:processDebugMainManifest
 > Task :app:processDebugManifest
 > Task :app:preDebugUnitTestBuild UP-TO-DATE
-> Task :app:javaPreCompileDebug
-> Task :app:processDebugManifestForPackage
 > Task :app:javaPreCompileDebugUnitTest
+> Task :app:processDebugManifestForPackage
+> Task :app:javaPreCompileDebug
 > Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
 > Task :app:mergeDebugShaders
 > Task :app:compileDebugShaders NO-SOURCE
 > Task :app:generateDebugAssets UP-TO-DATE
 > Task :app:mergeDebugAssets
-> Task :app:desugarDebugFileDependencies
 > Task :app:compressDebugAssets
+> Task :app:desugarDebugFileDependencies
 > Task :app:mergeDebugJniLibFolders
 > Task :app:checkDebugDuplicateClasses
-> Task :app:mergeLibDexDebug
-> Task :app:validateSigningDebug
-> Task :app:writeDebugAppMetadata
-> Task :app:writeDebugSigningConfigVersions
-> Task :app:mergeDebugNativeLibs
 > Task :app:processDebugResources
-
-> Task :app:stripDebugDebugSymbols
-Unable to strip the following libraries, packaging them as they are: libonnxruntime.so, libonnxruntime4j_jni.so. Run with --info option to learn more.
-
+> Task :app:mergeDebugNativeLibs
+> Task :app:compileDebugKotlin
 > Task :app:mergeExtDexDebug
 
 > Task :app:compileDebugKotlin
@@ -50,21 +43,29 @@ w: file:///home/runner/work/mscrptr-mobile-test/mscrptr-mobile-test/app/src/main
 w: file:///home/runner/work/mscrptr-mobile-test/mscrptr-mobile-test/app/src/main/java/dev/cardrhyme/muscriptormobile/PianoRollView.kt:50:51 'field scaledDensity: Float' is deprecated. Deprecated in Java.
 
 > Task :app:compileDebugJavaWithJavac NO-SOURCE
-> Task :app:processDebugJavaRes
 > Task :app:bundleDebugClassesToCompileJar
+> Task :app:processDebugJavaRes
 > Task :app:bundleDebugClassesToRuntimeJar
-> Task :app:dexBuilderDebug
-> Task :app:mergeDebugGlobalSynthetics
-> Task :app:mergeProjectDexDebug
 > Task :app:compileDebugUnitTestKotlin
+> Task :app:dexBuilderDebug
 > Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
 > Task :app:processDebugUnitTestJavaRes
-> Task :app:mergeDebugJavaResource
 > Task :app:testDebugUnitTest
+> Task :app:mergeDebugGlobalSynthetics
+> Task :app:mergeLibDexDebug
+> Task :app:validateSigningDebug
+> Task :app:writeDebugAppMetadata
+> Task :app:mergeProjectDexDebug
+> Task :app:writeDebugSigningConfigVersions
+
+> Task :app:stripDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libonnxruntime.so, libonnxruntime4j_jni.so. Run with --info option to learn more.
+
+> Task :app:mergeDebugJavaResource
 > Task :app:packageDebug
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/build-1785865206155.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/build-1785865732650.json
 
-BUILD SUCCESSFUL in 35s
+BUILD SUCCESSFUL in 1m 42s
 41 actionable tasks: 41 executed
