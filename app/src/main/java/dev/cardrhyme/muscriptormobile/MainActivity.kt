@@ -10,6 +10,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -40,6 +41,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var previewStatus: TextView
     private lateinit var songVolumeLabel: TextView
     private lateinit var midiVolumeLabel: TextView
+    private lateinit var cacheSummary: TextView
     private lateinit var progress: ProgressBar
     private lateinit var downloadButton: MaterialButton
     private lateinit var pickButton: MaterialButton
@@ -49,7 +51,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var playPauseButton: MaterialButton
     private lateinit var restartButton: MaterialButton
     private lateinit var themeButton: MaterialButton
-    private lateinit var cacheSpinner: Spinner
+    private lateinit var cachePrecisionSpinner: Spinner
+    private lateinit var cacheBudgetSpinner: Spinner
     private lateinit var backendSpinner: Spinner
     private lateinit var songVolume: SeekBar
     private lateinit var midiVolume: SeekBar
@@ -164,7 +167,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(header, matchWidth())
 
         root.addView(TextView(this).apply {
-            text = "INT4 transcription • 5 s windows / 4 s hop • 1 s overlap • CPU / GPU / NPU modes"
+            text = "INT4 model • adaptive FP32 / FP16 / BF16 / INT8 / INT4 KV cache • 1 s overlap"
             textSize = 12.5f
             setTextColor(getColor(R.color.app_on_surface_variant))
             setLineSpacing(2f, 1f)
@@ -180,26 +183,51 @@ class MainActivity : AppCompatActivity() {
         }, cardMargin())
 
         root.addView(sectionCard("Runtime") {
-            addView(fieldLabel("Memory profile"))
-            cacheSpinner = themedSpinner(
-                listOf(
-                    "Recommended · 1024 cache (~192 MiB)",
-                    "Experimental · 1200 cache (~225 MiB)",
-                    "Safer · 896 cache (~168 MiB)",
-                    "Ultra low memory · 768 cache (~144 MiB)",
-                ),
+            addView(fieldLabel("KV-cache precision"))
+            cachePrecisionSpinner = themedSpinner(CachePrecision.values().map { it.displayName })
+            addView(cachePrecisionSpinner, fieldMargin())
+
+            addView(fieldLabel("KV-cache memory budget"), margin(top = 14))
+            cacheBudgetSpinner = themedSpinner(CACHE_BUDGETS_MIB.map { "$it MiB" })
+            addView(cacheBudgetSpinner, fieldMargin())
+
+            cacheSummary = hintText("")
+            addView(cacheSummary, margin(top = 9, width = LinearLayout.LayoutParams.MATCH_PARENT))
+
+            val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            val savedPrecision = preferences
+                .getInt(KEY_CACHE_PRECISION, CachePrecision.FP16.ordinal)
+                .coerceIn(0, CachePrecision.values().lastIndex)
+            val savedBudget = preferences.getInt(KEY_CACHE_BUDGET_MIB, DEFAULT_CACHE_BUDGET_MIB)
+            cachePrecisionSpinner.setSelection(savedPrecision)
+            cacheBudgetSpinner.setSelection(
+                CACHE_BUDGETS_MIB.indexOf(savedBudget).takeIf { it >= 0 }
+                    ?: CACHE_BUDGETS_MIB.indexOf(DEFAULT_CACHE_BUDGET_MIB),
             )
-            addView(cacheSpinner, fieldMargin())
-            addView(hintText(
-                "1200 may fit this device but uses roughly 33 MiB more KV memory than 1024. If Android kills the process, return to 1024.",
-            ), margin(top = 8, width = LinearLayout.LayoutParams.MATCH_PARENT))
+
+            val cacheListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: AdapterView<*>?,
+                    view: View?,
+                    position: Int,
+                    id: Long,
+                ) {
+                    persistCacheSettings()
+                    updateCacheSummary()
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
+            cachePrecisionSpinner.onItemSelectedListener = cacheListener
+            cacheBudgetSpinner.onItemSelectedListener = cacheListener
+            updateCacheSummary()
 
             addView(fieldLabel("Compute backend"), margin(top = 14))
             backendSpinner = themedSpinner(ComputeBackend.values().map { it.displayName })
             addView(backendSpinner, fieldMargin())
 
             addView(hintText(
-                "Android chooses whether NNAPI uses the GPU or NPU. Parallel mode prepares the next overlapped window on the accelerator while the current decoder runs on CPU.",
+                "Android chooses whether NNAPI uses the GPU or NPU. Compressed-cache adapter nodes can remain on CPU while supported model regions run on the accelerator.",
             ), margin(top = 9, width = LinearLayout.LayoutParams.MATCH_PARENT))
         }, cardMargin())
 
@@ -311,6 +339,47 @@ class MainActivity : AppCompatActivity() {
         setContentView(scroll)
     }
 
+    private fun selectedCachePrecision(): CachePrecision = CachePrecision.values().getOrElse(
+        cachePrecisionSpinner.selectedItemPosition,
+    ) { CachePrecision.FP16 }
+
+    private fun selectedCacheBudgetMiB(): Int = CACHE_BUDGETS_MIB.getOrElse(
+        cacheBudgetSpinner.selectedItemPosition,
+    ) { DEFAULT_CACHE_BUDGET_MIB }
+
+    private fun persistCacheSettings() {
+        if (!::cachePrecisionSpinner.isInitialized || !::cacheBudgetSpinner.isInitialized) return
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_CACHE_PRECISION, cachePrecisionSpinner.selectedItemPosition)
+            .putInt(KEY_CACHE_BUDGET_MIB, selectedCacheBudgetMiB())
+            .apply()
+    }
+
+    private fun updateCacheSummary() {
+        if (!::cacheSummary.isInitialized) return
+        val precision = selectedCachePrecision()
+        val budgetMiB = selectedCacheBudgetMiB()
+        val cacheLength = precision.cacheLengthForBudget(budgetMiB)
+        val actualMiB = precision.actualMemoryMiB(cacheLength)
+        val outputPositions = precision.estimatedGenerationPositions(cacheLength)
+        val capNote = if (cacheLength == CachePrecision.MODEL_MAX_CACHE_LENGTH) {
+            " Model limit reached; unused budget is left free."
+        } else {
+            ""
+        }
+        cacheSummary.text = String.format(
+            Locale.US,
+            "%d MiB budget → %d positions · %.1f MiB persistent KV · ~%d generation positions. %s%s Adapter workspace is additional.",
+            budgetMiB,
+            cacheLength,
+            actualMiB,
+            outputPositions,
+            precision.qualityNote,
+            capNote,
+        )
+    }
+
     private fun toggleTheme() {
         if (currentTask?.isActive == true) {
             Toast.makeText(this, "Finish or cancel the current task before changing theme", Toast.LENGTH_SHORT).show()
@@ -377,12 +446,9 @@ class MainActivity : AppCompatActivity() {
         setBusy(true)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        val cacheLength = when (cacheSpinner.selectedItemPosition) {
-            1 -> 1200
-            2 -> 896
-            3 -> 768
-            else -> 1024
-        }
+        val cachePrecision = selectedCachePrecision()
+        val cacheBudgetMiB = selectedCacheBudgetMiB()
+        val cacheLength = cachePrecision.cacheLengthForBudget(cacheBudgetMiB)
         val requestedBackend = ComputeBackend.values().getOrElse(
             backendSpinner.selectedItemPosition,
         ) { ComputeBackend.CPU }
@@ -402,6 +468,11 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
+                inferenceStatus.text = "Preparing ${cachePrecision.shortName} cache decoder…"
+                val decoderFile = withContext(Dispatchers.IO) {
+                    downloader.prepareCacheDecoder(cachePrecision)
+                }
+
                 preview = LivePreviewController(
                     context = this@MainActivity,
                     audioUri = uri,
@@ -414,10 +485,12 @@ class MainActivity : AppCompatActivity() {
 
                 inferenceStatus.text = String.format(
                     Locale.US,
-                    "Loaded %.1f s · initializing %s · %d cache…",
+                    "Loaded %.1f s · initializing %s · %s %d-position cache from %d MiB budget…",
                     decoded.durationSeconds,
                     requestedBackend.shortName,
+                    cachePrecision.shortName,
                     cacheLength,
+                    cacheBudgetMiB,
                 )
                 previewStatus.text = "Waiting for the first stable overlapped region"
 
@@ -425,7 +498,9 @@ class MainActivity : AppCompatActivity() {
                 val result = withContext(Dispatchers.Default) {
                     MuScriptorEngine(
                         modelDir = downloader.modelDir,
+                        decoderFile = decoderFile,
                         maxCacheLength = cacheLength,
+                        cachePrecision = cachePrecision,
                         requestedBackend = requestedBackend,
                     ).use { engine ->
                         activeBackendName = engine.activeBackend.shortName
@@ -457,6 +532,10 @@ class MainActivity : AppCompatActivity() {
                                         inferenceStatus.text = buildString {
                                             append(activeBackendName)
                                             append(" · ")
+                                            append(cachePrecision.shortName)
+                                            append(" ")
+                                            append(cacheLength)
+                                            append(" · ")
                                             append(state.message)
                                             append(" · ")
                                             append(noteCount)
@@ -479,7 +558,8 @@ class MainActivity : AppCompatActivity() {
                 lastMidi = result.midi
                 progress.progress = progress.max
                 saveButton.isEnabled = true
-                inferenceStatus.text = "Done · $activeBackendName · ${result.notes.size} notes · ${result.generatedTokens} tokens"
+                inferenceStatus.text =
+                    "Done · $activeBackendName · ${cachePrecision.shortName} $cacheLength · ${result.notes.size} notes · ${result.generatedTokens} tokens"
                 Toast.makeText(this@MainActivity, "Transcription complete", Toast.LENGTH_SHORT).show()
             } catch (_: CancellationException) {
                 inferenceStatus.text = "Transcription cancelled"
@@ -534,7 +614,8 @@ class MainActivity : AppCompatActivity() {
         val busy = currentTask?.isActive == true
         downloadButton.isEnabled = !busy
         pickButton.isEnabled = !busy
-        cacheSpinner.isEnabled = !busy
+        cachePrecisionSpinner.isEnabled = !busy
+        cacheBudgetSpinner.isEnabled = !busy
         backendSpinner.isEnabled = !busy
         themeButton.isEnabled = !busy
         transcribeButton.isEnabled = !busy && downloader.isReady() && selectedAudio != null
@@ -763,7 +844,24 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PREFS_NAME = "muscriptor_ui"
         private const val KEY_DARK_THEME = "dark_theme"
+        private const val KEY_CACHE_PRECISION = "cache_precision"
+        private const val KEY_CACHE_BUDGET_MIB = "cache_budget_mib"
         private const val DEFAULT_SONG_PERCENT = 20
         private const val DEFAULT_MIDI_PERCENT = 80
+        private const val DEFAULT_CACHE_BUDGET_MIB = 192
+        private val CACHE_BUDGETS_MIB = listOf(
+            96,
+            112,
+            128,
+            144,
+            160,
+            176,
+            192,
+            224,
+            256,
+            320,
+            384,
+            512,
+        )
     }
 }
