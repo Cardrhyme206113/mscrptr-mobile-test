@@ -1,6 +1,6 @@
 exit_code=0
-commit=a2653113776e53a2ec80109340b7fed09b1b7bd7
-generated_at=2026-08-05T10:01:50Z
+commit=4f4ff891634ce79b8c84aadf19e2f4f6f2829d5b
+generated_at=2026-08-05T13:36:36Z
 
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.11.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
 Daemon will be stopped at the end of the build 
@@ -15,17 +15,17 @@ Daemon will be stopped at the end of the build
 > Task :app:createDebugCompatibleScreenManifests
 > Task :app:extractDeepLinksDebug
 > Task :app:parseDebugLocalResources
-> Task :app:mergeDebugResources
 > Task :app:processDebugMainManifest
 > Task :app:processDebugManifest
-> Task :app:preDebugUnitTestBuild UP-TO-DATE
 > Task :app:processDebugManifestForPackage
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
 > Task :app:javaPreCompileDebug
 > Task :app:javaPreCompileDebugUnitTest
 > Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
 > Task :app:mergeDebugShaders
 > Task :app:compileDebugShaders NO-SOURCE
 > Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugResources
 > Task :app:mergeDebugAssets
 > Task :app:desugarDebugFileDependencies
 > Task :app:compressDebugAssets
@@ -36,11 +36,11 @@ Daemon will be stopped at the end of the build
 > Task :app:validateSigningDebug
 > Task :app:writeDebugAppMetadata
 > Task :app:writeDebugSigningConfigVersions
-> Task :app:processDebugResources
 
 > Task :app:stripDebugDebugSymbols
 Unable to strip the following libraries, packaging them as they are: libonnxruntime.so, libonnxruntime4j_jni.so. Run with --info option to learn more.
 
+> Task :app:processDebugResources
 > Task :app:mergeExtDexDebug
 
 > Task :app:compileDebugKotlin
@@ -51,8 +51,8 @@ w: file:///home/runner/work/mscrptr-mobile-test/mscrptr-mobile-test/app/src/main
 w: file:///home/runner/work/mscrptr-mobile-test/mscrptr-mobile-test/app/src/main/java/dev/cardrhyme/muscriptormobile/PianoRollView.kt:56:51 'field scaledDensity: Float' is deprecated. Deprecated in Java.
 
 > Task :app:compileDebugJavaWithJavac NO-SOURCE
-> Task :app:bundleDebugClassesToCompileJar
 > Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
 > Task :app:processDebugJavaRes
 > Task :app:compileDebugUnitTestKotlin
 > Task :app:dexBuilderDebug
@@ -65,7 +65,7 @@ w: file:///home/runner/work/mscrptr-mobile-test/mscrptr-mobile-test/app/src/main
 > Task :app:packageDebug
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/build-1785924067553.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/build-1785936957032.json
 
-BUILD SUCCESSFUL in 47s
+BUILD SUCCESSFUL in 43s
 41 actionable tasks: 41 executed
