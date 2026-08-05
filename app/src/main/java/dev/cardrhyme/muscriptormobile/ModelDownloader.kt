@@ -51,17 +51,25 @@ class ModelDownloader(private val context: Context) {
     }
 
     /**
-     * Returns the decoder graph matching the requested persistent cache format.
+     * Returns the primary decoder graph for the requested mode.
      *
-     * Cache variants are tiny graph rewrites bundled in the APK. They continue to reference the
-     * already-downloaded decoder.onnx.data file, so changing cache precision never downloads
-     * another 200+ MiB model.
+     * K8/V8 uses two tiny graph rewrites which share decoder.onnx.data: FP16 native GQA performs the
+     * one-time 501-position audio prefill, then the custom-op graph performs incremental K8/V8
+     * attention. No second model-weight download is required.
      */
     fun prepareCacheDecoder(precision: CachePrecision): File {
         if (precision == CachePrecision.FP32) return File(modelDir, "decoder.onnx")
         check(isReady()) { "Base model must be downloaded before preparing a cache decoder" }
 
-        val assetName = checkNotNull(precision.assetFileName)
+        return if (precision == CachePrecision.K8V8_NATIVE) {
+            installCacheAsset(checkNotNull(CachePrecision.K8V8_NATIVE.assetFileName))
+            installCacheAsset(checkNotNull(CachePrecision.FP16.assetFileName))
+        } else {
+            installCacheAsset(checkNotNull(precision.assetFileName))
+        }
+    }
+
+    private fun installCacheAsset(assetName: String): File {
         val target = File(modelDir, assetName)
         val temporary = File(modelDir, "$assetName.tmp")
         modelDir.mkdirs()
@@ -170,7 +178,7 @@ class ModelDownloader(private val context: Context) {
             connectTimeout = 30_000
             readTimeout = 60_000
             instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "MuScriptorMobile/0.7")
+            setRequestProperty("User-Agent", "MuScriptorMobile/0.8")
             if (offset > 0) setRequestProperty("Range", "bytes=$offset-")
             connect()
         }
