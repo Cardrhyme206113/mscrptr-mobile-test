@@ -9,7 +9,7 @@ on:
       - '.github/workflows/publish-release.yml'
 
 concurrency:
-  group: muscriptor-v0.7.0-release
+  group: muscriptor-v0.7.1-release
   cancel-in-progress: true
 
 permissions:
@@ -62,28 +62,28 @@ jobs:
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 
       - name: Prepare release asset
-        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.7.0.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.7.1.apk
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.7.0 --cleanup-tag --yes || true
-          gh release create v0.7.0 \
-            MuScriptor-Mobile-v0.7.0.apk \
+          gh release delete v0.7.1 --cleanup-tag --yes || true
+          gh release create v0.7.1 \
+            MuScriptor-Mobile-v0.7.1.apk \
             --target "$GITHUB_SHA" \
-            --title "MuScriptor Mobile v0.7.0" \
-            --notes "Native fused FP16 KV-cache update. The recommended FP16 mode no longer converts the complete cache to FP32 and back on every layer and token. The decoder's 24 fused GroupQueryAttention operators now read and write FP16 KV directly; only the much smaller packed-QKV input and attention activation are cast. In the equal-length x86 CI benchmark at 768 cache positions, FP32 measured 20.16 ms/token, native FP16 measured 15.50 ms/token, and the old compatibility FP16 path measured 28.05 ms/token. Device results will differ, but this validates that the previous conversion bottleneck is removed. FP16 at a 192 MiB budget still automatically expands to 2048 positions; for a fair 1024-vs-1024 speed test, compare FP32 at 192 MiB with native FP16 at 96 MiB. The old FP16 adapter remains as FP16 compatibility, while BF16, INT8, and INT4 remain experimental memory-only modes because ONNX Runtime GroupQueryAttention does not natively consume those cache formats. Includes overlap inference, sharp orange light/dark UI, live MIDI preview, CPU/NNAPI/parallel modes, and the persistent v0.6+ sideload signature."
+            --title "MuScriptor Mobile v0.7.1" \
+            --notes "Live-preview and viewer patch. Content-provider audio is now copied to a private seekable playback file on a separate thread while inference starts, with the original MIME type passed to ExoPlayer, preventing the preview from remaining stuck on Preparing original audio player under heavy CPU/NNAPI load. The MIDI scheduler drains due events under one lock and preview UI callbacks are deduplicated. The piano roll now uses the app's actual surface, outline, text, and orange accent colors instead of a separate blue-black palette. Rendering uses sharp non-antialiased note rectangles, clips note drawing to the plot, caps inference-event redraws at 20 fps, and drains large event bursts in bounded batches. Includes the native fused FP16 GQA cache path from v0.7.0 and keeps the persistent v0.6+ sideload signature."
 
       - name: Persist release link
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p ci
-          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.7.0' > ci/release-url.txt
+          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.7.1' > ci/release-url.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add ci/release-url.txt
-          git commit -m "docs: record v0.7.0 release URL" || exit 0
+          git commit -m "docs: record v0.7.1 release URL" || exit 0
           git pull --rebase origin main
           git push origin HEAD:main
