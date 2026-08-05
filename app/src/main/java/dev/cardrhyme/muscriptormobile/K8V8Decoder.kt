@@ -10,7 +10,6 @@ import java.io.Closeable
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.FloatBuffer
 import kotlin.math.min
 
 /**
@@ -42,7 +41,8 @@ internal class K8V8Decoder(
         File(modelDir, K8V8_GRAPH).absolutePath,
         options,
     )
-    private val bootstrapCache = Fp16Cache(environment, BOOTSTRAP_CACHE_LENGTH)
+    private val bootstrapCacheLength = min(maxCacheLength, BOOTSTRAP_CACHE_LIMIT)
+    private val bootstrapCache = Fp16Cache(environment, bootstrapCacheLength)
     private val cache = K8Cache(environment, maxCacheLength)
     private val emptyCondition = floatTensor(
         FloatArray(0),
@@ -61,8 +61,8 @@ internal class K8V8Decoder(
         prompt.forEachIndexed { index, token -> firstIds[index + 1] = token.toLong() }
 
         val firstQueryLength = conditionLength + firstIds.size
-        require(firstQueryLength <= BOOTSTRAP_CACHE_LENGTH) {
-            "K8/V8 prefill needs $firstQueryLength positions; bootstrap cache has $BOOTSTRAP_CACHE_LENGTH"
+        require(firstQueryLength <= bootstrapCacheLength) {
+            "K8/V8 prefill needs $firstQueryLength positions; bootstrap cache has $bootstrapCacheLength. Reduce active tie notes or use FP16 native."
         }
         require(firstQueryLength <= maxCacheLength) {
             "Cache profile too small: prefill needs $firstQueryLength positions, has $maxCacheLength"
@@ -92,7 +92,7 @@ internal class K8V8Decoder(
             sourceBuffers = bootstrapCache.rawBuffers,
             destinationBuffers = cache.dataBuffers,
             scaleBuffers = cache.scaleBuffers,
-            sourceLength = BOOTSTRAP_CACHE_LENGTH,
+            sourceLength = bootstrapCacheLength,
             destinationLength = maxCacheLength,
             positions = firstQueryLength,
             heads = NUM_HEADS,
@@ -315,7 +315,7 @@ internal class K8V8Decoder(
 
     companion object {
         private const val K8V8_GRAPH = "decoder-cache-k8v8-native.onnx"
-        private const val BOOTSTRAP_CACHE_LENGTH = 512
+        private const val BOOTSTRAP_CACHE_LIMIT = 768
         private const val NUM_LAYERS = 24
         private const val NUM_HEADS = 16
         private const val HEAD_DIM = 64
