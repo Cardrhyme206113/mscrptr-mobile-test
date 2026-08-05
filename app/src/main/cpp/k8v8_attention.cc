@@ -16,6 +16,10 @@
 
 #if defined(__aarch64__)
 #include <arm_neon.h>
+#include <sys/auxv.h>
+#if defined(__linux__)
+#include <asm/hwcap.h>
+#endif
 #endif
 
 namespace {
@@ -62,20 +66,76 @@ inline float half_to_float(uint16_t bits) {
 #endif
 }
 
+#if defined(__aarch64__)
+inline int32_t dot_s8_64_neon(const int8_t* a, const int8_t* b) {
+  int32x4_t accumulator = vdupq_n_s32(0);
+  for (int offset = 0; offset < 64; offset += 8) {
+    const int16x8_t products = vmull_s8(vld1_s8(a + offset), vld1_s8(b + offset));
+    accumulator = vaddq_s32(accumulator, vpaddlq_s16(products));
+  }
+  return vaddvq_s32(accumulator);
+}
+
+#if defined(__clang__)
+__attribute__((target("dotprod")))
+#endif
+int32_t dot_s8_64_dotprod(const int8_t* a, const int8_t* b) {
+  int32x4_t accumulator = vdupq_n_s32(0);
+  accumulator = vdotq_s32(accumulator, vld1q_s8(a), vld1q_s8(b));
+  accumulator = vdotq_s32(accumulator, vld1q_s8(a + 16), vld1q_s8(b + 16));
+  accumulator = vdotq_s32(accumulator, vld1q_s8(a + 32), vld1q_s8(b + 32));
+  accumulator = vdotq_s32(accumulator, vld1q_s8(a + 48), vld1q_s8(b + 48));
+  return vaddvq_s32(accumulator);
+}
+
+inline bool cpu_has_dotprod() {
+#if defined(HWCAP_ASIMDDP)
+  static const bool supported = (getauxval(AT_HWCAP) & HWCAP_ASIMDDP) != 0;
+  return supported;
+#else
+  return false;
+#endif
+}
+#endif
+
 inline int32_t dot_s8_64(const int8_t* a, const int8_t* b) {
-#if defined(__ARM_FEATURE_DOTPROD)
-  int32x4_t acc = vdupq_n_s32(0);
-  acc = vdotq_s32(acc, vld1q_s8(a), vld1q_s8(b));
-  acc = vdotq_s32(acc, vld1q_s8(a + 16), vld1q_s8(b + 16));
-  acc = vdotq_s32(acc, vld1q_s8(a + 32), vld1q_s8(b + 32));
-  acc = vdotq_s32(acc, vld1q_s8(a + 48), vld1q_s8(b + 48));
-  return vaddvq_s32(acc);
+#if defined(__aarch64__)
+  return cpu_has_dotprod() ? dot_s8_64_dotprod(a, b) : dot_s8_64_neon(a, b);
 #else
   int32_t result = 0;
   for (int index = 0; index < 64; ++index) {
     result += static_cast<int32_t>(a[index]) * static_cast<int32_t>(b[index]);
   }
   return result;
+#endif
+}
+
+inline void accumulate_scaled_s8(float* output, const int8_t* value, float factor) {
+#if defined(__aarch64__)
+  for (int offset = 0; offset < 64; offset += 16) {
+    const int8x16_t packed = vld1q_s8(value + offset);
+    const int16x8_t low16 = vmovl_s8(vget_low_s8(packed));
+    const int16x8_t high16 = vmovl_s8(vget_high_s8(packed));
+
+    float32x4_t out0 = vld1q_f32(output + offset);
+    float32x4_t out1 = vld1q_f32(output + offset + 4);
+    float32x4_t out2 = vld1q_f32(output + offset + 8);
+    float32x4_t out3 = vld1q_f32(output + offset + 12);
+
+    out0 = vfmaq_n_f32(out0, vcvtq_f32_s32(vmovl_s16(vget_low_s16(low16))), factor);
+    out1 = vfmaq_n_f32(out1, vcvtq_f32_s32(vmovl_s16(vget_high_s16(low16))), factor);
+    out2 = vfmaq_n_f32(out2, vcvtq_f32_s32(vmovl_s16(vget_low_s16(high16))), factor);
+    out3 = vfmaq_n_f32(out3, vcvtq_f32_s32(vmovl_s16(vget_high_s16(high16))), factor);
+
+    vst1q_f32(output + offset, out0);
+    vst1q_f32(output + offset + 4, out1);
+    vst1q_f32(output + offset + 8, out2);
+    vst1q_f32(output + offset + 12, out3);
+  }
+#else
+  for (int dim = 0; dim < 64; ++dim) {
+    output[dim] += factor * static_cast<float>(value[dim]);
+  }
 #endif
 }
 
@@ -273,12 +333,7 @@ struct K8V8Kernel {
                            work.value_scales[scale_head_base + position];
       const int8_t* value = work.value_cache + cache_head_base +
                             static_cast<size_t>(position) * head_size_;
-#if defined(__clang__)
-#pragma clang loop vectorize(enable)
-#endif
-      for (int dim = 0; dim < head_size_; ++dim) {
-        output[dim] += factor * static_cast<float>(value[dim]);
-      }
+      accumulate_scaled_s8(output, value, factor);
     }
   }
 
