@@ -8,6 +8,7 @@ mkdir -p "$root"
 
 for header in \
   onnxruntime_c_api.h \
+  onnxruntime_ep_c_api.h \
   onnxruntime_cxx_api.h \
   onnxruntime_cxx_inline.h \
   onnxruntime_float16.h
