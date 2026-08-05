@@ -1,26 +1,33 @@
 package dev.cardrhyme.muscriptormobile
 
+import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.webkit.MimeTypeMap
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import java.io.Closeable
+import java.io.File
+import java.io.FileOutputStream
 import java.util.PriorityQueue
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import kotlin.math.abs
 
 /**
  * Uses the original recording as the master clock and schedules finalized MIDI notes against it.
  *
- * LiveNoteEvent.Started is intentionally not sent to the synth: it is provisional until the model
- * emits the matching Ended event. Playing provisional starts caused stale/random notes that never
- * existed in the exported MIDI. The piano roll may still display provisional notes separately.
+ * Document-provider URIs are first copied to a private local file on a background thread. This
+ * gives ExoPlayer a stable, seekable source with a known MIME type while inference is saturating the
+ * device, instead of leaving the player indefinitely buffering on a slow/opaque content provider.
  */
 class LivePreviewController(
     context: Context,
@@ -61,7 +68,16 @@ class LivePreviewController(
         .thenBy { it.priority }
         .thenBy { it.sequence }
 
+    private val appContext = context.applicationContext
+    private val originalAudioUri = audioUri
+    private val sourceMimeType = appContext.contentResolver.getType(audioUri)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val sourceExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "muscriptor-preview-source").apply { isDaemon = true }
+    }
+    private var sourceFuture: Future<*>? = null
+    private var stagedSourceFile: File? = null
+
     private val eventLock = Any()
     private val allEvents = ArrayList<ScheduledEvent>()
     private val pendingEvents = PriorityQueue(eventComparator)
@@ -69,23 +85,8 @@ class LivePreviewController(
     private var eventSequence = 0L
 
     private val synth = LiveMidiSynth()
-    private val player = ExoPlayer.Builder(context).build().apply {
-        setAudioAttributes(
-            AudioAttributes.Builder()
-                .setUsage(C.USAGE_MEDIA)
-                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                .build(),
-            false,
-        )
-        setMediaItem(MediaItem.fromUri(audioUri))
-        volume = DEFAULT_SONG_VOLUME
-        addListener(object : Player.Listener {
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) synth.allNotesOff()
-            }
-        })
-        prepare()
-    }
+    private var player: ExoPlayer? = null
+    private var requestedSongVolume = DEFAULT_SONG_VOLUME
 
     @Volatile
     private var finalizedFrontierSeconds = 0.0
@@ -107,6 +108,8 @@ class LivePreviewController(
     private var lastUiUpdateMs = 0L
     private var lastSpeedApplyMs = 0L
     private var lastUiSignature = -1
+    private var lastUiPositionBucket = Int.MIN_VALUE
+    private var lastUiFrontierBucket = Int.MIN_VALUE
 
     private val tick = object : Runnable {
         override fun run() {
@@ -118,7 +121,114 @@ class LivePreviewController(
 
     init {
         synth.setVolume(DEFAULT_MIDI_VOLUME)
+        prepareAudioSource()
         mainHandler.post(tick)
+    }
+
+    private fun prepareAudioSource() {
+        if (originalAudioUri.scheme != ContentResolver.SCHEME_CONTENT) {
+            mainHandler.post { installPlayer(originalAudioUri) }
+            return
+        }
+
+        sourceFuture = sourceExecutor.submit {
+            val localFile = runCatching { copySourceToCache() }.getOrNull()
+            mainHandler.post {
+                if (closed) {
+                    localFile?.delete()
+                    return@post
+                }
+                if (localFile != null) {
+                    stagedSourceFile = localFile
+                    installPlayer(Uri.fromFile(localFile))
+                } else {
+                    // A provider may reject stream copying while still being directly playable.
+                    installPlayer(originalAudioUri)
+                }
+            }
+        }
+    }
+
+    private fun copySourceToCache(): File {
+        val directory = File(appContext.cacheDir, "muscriptor-preview").apply {
+            mkdirs()
+            listFiles()?.forEach { it.delete() }
+        }
+        val extension = sourceExtension()
+        val temporary = File(directory, "source-${SystemClock.uptimeMillis()}.$extension.tmp")
+        val target = File(directory, "source-${SystemClock.uptimeMillis()}.$extension")
+
+        try {
+            val input = appContext.contentResolver.openInputStream(originalAudioUri)
+                ?: error("Could not open the selected audio")
+            input.use { source ->
+                FileOutputStream(temporary).buffered(1 shl 20).use { output ->
+                    source.copyTo(output, 1 shl 20)
+                }
+            }
+            check(temporary.renameTo(target)) { "Could not finalize preview audio" }
+            return target
+        } catch (error: Throwable) {
+            temporary.delete()
+            target.delete()
+            throw error
+        }
+    }
+
+    private fun sourceExtension(): String {
+        val pathExtension = originalAudioUri.lastPathSegment
+            ?.substringAfterLast('.', "")
+            ?.lowercase()
+            ?.takeIf { it.length in 1..8 && it.all(Char::isLetterOrDigit) }
+        if (pathExtension != null) return pathExtension
+        return MimeTypeMap.getSingleton()
+            .getExtensionFromMimeType(sourceMimeType)
+            ?.takeIf { it.isNotBlank() }
+            ?: "audio"
+    }
+
+    private fun installPlayer(uri: Uri) {
+        if (closed) return
+        runCatching { player?.release() }
+        started = false
+        emergencyHold = false
+        currentSpeed = 1f
+
+        val mediaItem = MediaItem.Builder()
+            .setUri(uri)
+            .apply {
+                sourceMimeType?.takeIf { it.startsWith("audio/") }?.let(::setMimeType)
+            }
+            .build()
+
+        player = ExoPlayer.Builder(appContext).build().also { newPlayer ->
+            newPlayer.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                    .build(),
+                false,
+            )
+            newPlayer.volume = requestedSongVolume
+            newPlayer.addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_ENDED) synth.allNotesOff()
+                    publishState(force = true)
+                }
+
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    publishState(force = true)
+                }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    synth.allNotesOff()
+                    publishState(force = true)
+                }
+            })
+            newPlayer.setMediaItem(mediaItem)
+            newPlayer.prepare()
+        }
+        publishState(force = true)
     }
 
     fun accept(event: LiveNoteEvent) {
@@ -131,27 +241,26 @@ class LivePreviewController(
         if (note.pitch !in 0..127) return
         if (note.offsetSeconds <= note.onsetSeconds) return
 
-        val on = ScheduledEvent(
-            timeSeconds = note.onsetSeconds,
-            priority = 1,
-            sequence = nextSequence(),
-            action = Action.On(
-                id = event.id,
-                program = note.program,
-                pitch = note.pitch,
-                isDrum = note.isDrum,
-                offsetSeconds = note.offsetSeconds,
-            ),
-        )
-        val off = ScheduledEvent(
-            timeSeconds = note.offsetSeconds,
-            priority = 0,
-            sequence = nextSequence(),
-            action = Action.Off(event.id),
-        )
-
         synchronized(eventLock) {
             if (!finalizedIds.add(event.id)) return
+            val on = ScheduledEvent(
+                timeSeconds = note.onsetSeconds,
+                priority = 1,
+                sequence = eventSequence++,
+                action = Action.On(
+                    id = event.id,
+                    program = note.program,
+                    pitch = note.pitch,
+                    isDrum = note.isDrum,
+                    offsetSeconds = note.offsetSeconds,
+                ),
+            )
+            val off = ScheduledEvent(
+                timeSeconds = note.offsetSeconds,
+                priority = 0,
+                sequence = eventSequence++,
+                action = Action.Off(event.id),
+            )
             allEvents += on
             allEvents += off
             pendingEvents += on
@@ -170,7 +279,8 @@ class LivePreviewController(
     }
 
     fun setSongVolume(value: Float) {
-        runOnMain { player.volume = value.coerceIn(0f, 1f) }
+        requestedSongVolume = value.coerceIn(0f, 1f)
+        runOnMain { player?.volume = requestedSongVolume }
     }
 
     fun setMidiVolume(value: Float) {
@@ -179,15 +289,16 @@ class LivePreviewController(
 
     fun togglePause() {
         runOnMain {
+            val activePlayer = player ?: return@runOnMain
             if (!started) return@runOnMain
             userPaused = !userPaused
             if (userPaused) {
-                player.pause()
+                activePlayer.pause()
                 synth.allNotesOff()
             } else {
                 emergencyHold = false
-                rebuildAt(player.currentPosition / 1000.0)
-                player.play()
+                rebuildAt(activePlayer.currentPosition / 1000.0)
+                activePlayer.play()
             }
             publishState(force = true)
         }
@@ -195,33 +306,44 @@ class LivePreviewController(
 
     fun restart() {
         runOnMain {
+            val activePlayer = player ?: return@runOnMain
             if (!started) return@runOnMain
             userPaused = false
             emergencyHold = false
             currentSpeed = 1f
-            player.playbackParameters = PlaybackParameters(1f, 1f)
-            player.seekTo(0)
+            activePlayer.playbackParameters = PlaybackParameters(1f, 1f)
+            activePlayer.seekTo(0)
             rebuildAt(0.0)
-            player.play()
+            activePlayer.play()
             publishState(force = true)
         }
     }
 
     private fun tickOnMain() {
+        val activePlayer = player
+        if (activePlayer == null) {
+            val now = SystemClock.uptimeMillis()
+            if (now - lastUiUpdateMs >= UI_UPDATE_MILLIS) {
+                publishState(force = false)
+                lastUiUpdateMs = now
+            }
+            return
+        }
+
         val now = SystemClock.uptimeMillis()
-        val prepared = player.playbackState == Player.STATE_READY ||
-            player.playbackState == Player.STATE_ENDED
+        val prepared = activePlayer.playbackState == Player.STATE_READY ||
+            activePlayer.playbackState == Player.STATE_ENDED
 
         if (!started && prepared && (inferenceComplete || finalizedFrontierSeconds >= START_BUFFER_SECONDS)) {
             started = true
             currentSpeed = 1f
-            player.seekTo(0)
+            activePlayer.seekTo(0)
             rebuildAt(0.0)
-            player.play()
+            activePlayer.play()
             publishState(force = true)
         }
 
-        val position = player.currentPosition.coerceAtLeast(0L) / 1000.0
+        val position = activePlayer.currentPosition.coerceAtLeast(0L) / 1000.0
         lastKnownPositionSeconds = position
         val frontier = if (inferenceComplete) {
             maxOf(finalizedFrontierSeconds, audioDurationSeconds)
@@ -230,11 +352,11 @@ class LivePreviewController(
         }
         val lead = frontier - position
 
-        if (started && !userPaused && player.playbackState != Player.STATE_ENDED) {
+        if (started && !userPaused && activePlayer.playbackState != Player.STATE_ENDED) {
             if (!inferenceComplete && lead <= EMERGENCY_HOLD_SECONDS) {
                 if (!emergencyHold) {
                     emergencyHold = true
-                    player.pause()
+                    activePlayer.pause()
                     synth.allNotesOff()
                     publishState(force = true)
                 }
@@ -242,7 +364,7 @@ class LivePreviewController(
                 if (emergencyHold && (inferenceComplete || lead >= EMERGENCY_RESUME_SECONDS)) {
                     emergencyHold = false
                     rebuildAt(position)
-                    player.play()
+                    activePlayer.play()
                     publishState(force = true)
                 }
 
@@ -252,14 +374,13 @@ class LivePreviewController(
 
                     if (
                         now - lastSpeedApplyMs >= SPEED_APPLY_MILLIS &&
-                        abs(player.playbackParameters.speed - currentSpeed) > SPEED_CHANGE_THRESHOLD
+                        abs(activePlayer.playbackParameters.speed - currentSpeed) > SPEED_CHANGE_THRESHOLD
                     ) {
-                        // pitch=1 keeps musical pitch stable while the recording slows down.
-                        player.playbackParameters = PlaybackParameters(currentSpeed, 1f)
+                        activePlayer.playbackParameters = PlaybackParameters(currentSpeed, 1f)
                         lastSpeedApplyMs = now
                     }
 
-                    if (!player.isPlaying && prepared) player.play()
+                    if (!activePlayer.isPlaying && prepared) activePlayer.play()
                     processPending(position)
                 }
             }
@@ -280,23 +401,21 @@ class LivePreviewController(
         else -> MIN_PLAYBACK_SPEED
     }.coerceIn(MIN_PLAYBACK_SPEED, 1f)
 
-    /**
-     * Trigger notes early by the AudioTrack queue depth so their audible output aligns with the
-     * original song rather than arriving one hardware buffer late.
-     */
+    /** Drain all currently due events under one lock, then trigger the synth without holding it. */
     private fun processPending(positionSeconds: Double) {
         val audibleHorizon = positionSeconds + synth.outputLatencySeconds + EVENT_LOOKAHEAD_SECONDS
-
-        while (true) {
-            val event = synchronized(eventLock) {
-                val next = pendingEvents.peek() ?: return
-                if (next.timeSeconds <= audibleHorizon) pendingEvents.poll() else return
+        val due = ArrayList<ScheduledEvent>(16)
+        synchronized(eventLock) {
+            while (true) {
+                val next = pendingEvents.peek() ?: break
+                if (next.timeSeconds > audibleHorizon) break
+                due += pendingEvents.poll()
             }
+        }
 
+        for (event in due) {
             when (val action = event.action) {
                 is Action.On -> {
-                    // A finalized long note may arrive after its onset. Start it late only while it
-                    // is still active; never burst notes whose entire lifetime is already behind us.
                     if (action.offsetSeconds > positionSeconds - PAST_EVENT_TOLERANCE_SECONDS) {
                         synth.noteOn(
                             action.id,
@@ -349,29 +468,44 @@ class LivePreviewController(
     }
 
     private fun publishState(force: Boolean) {
-        val prepared = player.playbackState == Player.STATE_READY ||
-            player.playbackState == Player.STATE_ENDED
-        val position = player.currentPosition.coerceAtLeast(0L) / 1000.0
+        val activePlayer = player
+        val prepared = activePlayer?.let {
+            it.playbackState == Player.STATE_READY || it.playbackState == Player.STATE_ENDED
+        } == true
+        val position = activePlayer?.currentPosition?.coerceAtLeast(0L)?.div(1000.0)
+            ?: lastKnownPositionSeconds
         val frontier = if (inferenceComplete) {
             maxOf(finalizedFrontierSeconds, audioDurationSeconds)
         } else {
             finalizedFrontierSeconds
         }
+        val isPlaying = activePlayer?.isPlaying == true
         val signature =
             (if (prepared) 1 else 0) or
                 (if (started) 2 else 0) or
-                (if (player.isPlaying) 4 else 0) or
+                (if (isPlaying) 4 else 0) or
                 (if (userPaused) 8 else 0) or
                 (if (emergencyHold) 16 else 0)
+        val positionBucket = (position * UI_POSITION_BUCKETS_PER_SECOND).toInt()
+        val frontierBucket = (frontier * UI_POSITION_BUCKETS_PER_SECOND).toInt()
 
-        if (!force && signature == lastUiSignature && closed) return
+        if (
+            !force &&
+            signature == lastUiSignature &&
+            positionBucket == lastUiPositionBucket &&
+            frontierBucket == lastUiFrontierBucket
+        ) {
+            return
+        }
         lastUiSignature = signature
+        lastUiPositionBucket = positionBucket
+        lastUiFrontierBucket = frontierBucket
 
         onState(
             State(
                 prepared = prepared,
                 started = started,
-                playing = player.isPlaying && !userPaused && !emergencyHold,
+                playing = isPlaying && !userPaused && !emergencyHold,
                 waitingForBuffer = !started || emergencyHold,
                 positionSeconds = position,
                 finalizedFrontierSeconds = frontier,
@@ -381,8 +515,6 @@ class LivePreviewController(
         )
     }
 
-    private fun nextSequence(): Long = synchronized(eventLock) { eventSequence++ }
-
     private fun runOnMain(block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) block() else mainHandler.post(block)
     }
@@ -391,9 +523,14 @@ class LivePreviewController(
         if (closed) return
         closed = true
         mainHandler.removeCallbacksAndMessages(null)
-        runCatching { player.pause() }
-        runCatching { player.release() }
+        sourceFuture?.cancel(true)
+        sourceExecutor.shutdownNow()
+        runCatching { player?.pause() }
+        runCatching { player?.release() }
+        player = null
         synth.close()
+        stagedSourceFile?.delete()
+        stagedSourceFile = null
     }
 
     companion object {
@@ -412,5 +549,6 @@ class LivePreviewController(
         private const val PAST_EVENT_TOLERANCE_SECONDS = 0.015
         private const val TICK_MILLIS = 12L
         private const val UI_UPDATE_MILLIS = 100L
+        private const val UI_POSITION_BUCKETS_PER_SECOND = 10.0
     }
 }
