@@ -4,6 +4,7 @@ project(muscriptor_k8v8 LANGUAGES CXX)
 set(ORT_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/ort_headers")
 foreach(required_header
     onnxruntime_c_api.h
+    onnxruntime_ep_c_api.h
     onnxruntime_cxx_api.h
     onnxruntime_cxx_inline.h
     onnxruntime_float16.h)
