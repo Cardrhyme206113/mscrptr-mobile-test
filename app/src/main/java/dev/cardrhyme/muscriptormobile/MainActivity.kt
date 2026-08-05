@@ -378,7 +378,7 @@ class MainActivity : AppCompatActivity() {
             precision.qualityNote,
             capNote,
             when {
-                precision == CachePrecision.K8V8_NATIVE -> "A temporary 96 MiB FP16 prefill cache is additional."
+                precision == CachePrecision.K8V8_NATIVE -> "A temporary FP16 prefill cache adds up to 144 MiB for dense overlap tie prompts."
                 precision.usesFullCacheBoundaryConversion -> "Adapter workspace is additional."
                 else -> ""
             },
