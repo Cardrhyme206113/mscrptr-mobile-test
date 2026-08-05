@@ -30,6 +30,7 @@ class MuScriptorEngine(
     private val maxCacheLength: Int = 1024,
     private val cachePrecision: CachePrecision = CachePrecision.FP32,
     private val requestedBackend: ComputeBackend = ComputeBackend.CPU,
+    private val customOpLibraryPath: String? = null,
     private val threadCount: Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 8),
 ) : Closeable {
     data class Progress(
@@ -88,9 +89,29 @@ class MuScriptorEngine(
         append(maxCacheLength)
         append(" positions • ")
         append(String.format(Locale.US, "%.1f MiB", cachePrecision.actualMemoryMiB(maxCacheLength)))
+        if (cachePrecision == CachePrecision.K8V8_NATIVE) {
+            append(" • FP16 prefill + CPU fused INT8 incremental attention")
+        }
     }
 
-    private val cache = SharedCache(environment, maxCacheLength, cachePrecision)
+    private val cache = if (cachePrecision == CachePrecision.K8V8_NATIVE) {
+        null
+    } else {
+        SharedCache(environment, maxCacheLength, cachePrecision)
+    }
+    private val k8v8Decoder = if (cachePrecision == CachePrecision.K8V8_NATIVE) {
+        K8V8Decoder(
+            environment = environment,
+            modelDir = modelDir,
+            maxCacheLength = maxCacheLength,
+            customOpLibraryPath = requireNotNull(customOpLibraryPath) {
+                "K8/V8 mode requires the packaged native custom-op library path"
+            },
+            threadCount = threadCount,
+        )
+    } else {
+        null
+    }
     private val emptyCondition = floatTensor(FloatArray(0), longArrayOf(1, 0, MODEL_DIM.toLong()))
 
     /**
@@ -435,6 +456,22 @@ class MuScriptorEngine(
     ): ChunkResult {
         val condition = prepared.tensor
         val conditionLength = prepared.length
+        val nativeK8V8 = k8v8Decoder
+        if (nativeK8V8 != null) {
+            val result = nativeK8V8.run(
+                bootstrapSession = decoder,
+                condition = condition,
+                conditionLength = conditionLength,
+                prompt = prompt,
+                onToken = onToken,
+            )
+            return ChunkResult(
+                tokensNotStreamed = 0,
+                lastTokenMillis = result.lastTokenMillis,
+                hitCacheLimit = result.hitCacheLimit,
+            )
+        }
+        val sharedCache = checkNotNull(cache)
 
         val firstIds = LongArray(prompt.size + 1)
         firstIds[0] = INITIAL_TOKEN_ID.toLong()
@@ -472,11 +509,11 @@ class MuScriptorEngine(
                 put("position_ids", positionTensor)
                 put("seqlens_k", seqlensTensor)
                 put("total_sequence_length", totalLengthTensor)
-                putAll(cache.inputs)
+                putAll(sharedCache.inputs)
             }
 
             val tick = System.nanoTime()
-            val result = decoder.run(inputs, linkedSetOf("logits"), cache.outputs)
+            val result = decoder.run(inputs, linkedSetOf("logits"), sharedCache.outputs)
             lastMillis = (System.nanoTime() - tick) / 1_000_000.0
             val token = try {
                 val logits = result.get("logits").orElseThrow() as OnnxTensor
@@ -640,7 +677,8 @@ class MuScriptorEngine(
 
     override fun close() {
         emptyCondition.close()
-        cache.close()
+        k8v8Decoder?.close()
+        cache?.close()
         decoder.close()
         conditioner.close()
         decoderOptions.close()
@@ -714,6 +752,9 @@ class MuScriptorEngine(
                     .allocateDirect(elements)
                     .order(ByteOrder.nativeOrder())
                 OnnxTensor.createTensor(environment, buffer, shape, OnnxJavaType.INT8)
+            }
+            CachePrecision.Storage.K8V8 -> {
+                error("K8/V8 uses its dedicated data + scale cache implementation")
             }
             CachePrecision.Storage.PACKED_UINT4 -> {
                 val buffer = ByteBuffer

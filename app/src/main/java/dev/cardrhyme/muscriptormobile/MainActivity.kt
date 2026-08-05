@@ -167,7 +167,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(header, matchWidth())
 
         root.addView(TextView(this).apply {
-            text = "INT4 model • adaptive FP32 / FP16 / BF16 / INT8 / INT4 KV cache • 1 s overlap"
+            text = "INT4 model • native FP16 + K8/V8 cache paths • 1 s overlap"
             textSize = 12.5f
             setTextColor(getColor(R.color.app_on_surface_variant))
             setLineSpacing(2f, 1f)
@@ -370,13 +370,18 @@ class MainActivity : AppCompatActivity() {
         }
         cacheSummary.text = String.format(
             Locale.US,
-            "%d MiB budget → %d positions · %.1f MiB persistent KV · ~%d generation positions. %s%s Adapter workspace is additional.",
+            "%d MiB budget → %d positions · %.1f MiB persistent KV · ~%d generation positions. %s%s %s",
             budgetMiB,
             cacheLength,
             actualMiB,
             outputPositions,
             precision.qualityNote,
             capNote,
+            when {
+                precision == CachePrecision.K8V8_NATIVE -> "A temporary 96 MiB FP16 prefill cache is additional."
+                precision.usesFullCacheBoundaryConversion -> "Adapter workspace is additional."
+                else -> ""
+            },
         )
     }
 
@@ -502,6 +507,11 @@ class MainActivity : AppCompatActivity() {
                         maxCacheLength = cacheLength,
                         cachePrecision = cachePrecision,
                         requestedBackend = requestedBackend,
+                        customOpLibraryPath = if (cachePrecision == CachePrecision.K8V8_NATIVE) {
+                            K8V8Native.libraryPath(this@MainActivity)
+                        } else {
+                            null
+                        },
                     ).use { engine ->
                         activeBackendName = engine.activeBackend.shortName
                         runOnUiThread {
