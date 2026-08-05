@@ -103,7 +103,8 @@ enum class CachePrecision(
         storage = Storage.K8V8,
         qualityNote = "Fused INT8 attention reads K/V directly; per-head/per-position FP32 scales are included in the budget.",
         usesFullCacheBoundaryConversion = false,
-        extraBytesPerPosition = SCALE_BYTES_PER_POSITION,
+        // 24 layers × K/V × 16 heads × one FP32 scale.
+        extraBytesPerPosition = 3_072L,
     );
 
     enum class Storage {
@@ -145,8 +146,6 @@ enum class CachePrecision(
         private const val HEAD_DIM_LONG = 64L
         private const val ELEMENTS_PER_POSITION =
             NUM_LAYERS * NUM_KV_TENSORS_PER_LAYER * NUM_HEADS * HEAD_DIM_LONG
-        private const val SCALE_BYTES_PER_POSITION =
-            NUM_LAYERS * NUM_KV_TENSORS_PER_LAYER * NUM_HEADS * Float.SIZE_BYTES
         private const val MIB_BYTES = 1024L * 1024L
     }
 }
