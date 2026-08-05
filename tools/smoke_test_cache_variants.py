@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create ORT sessions for every generated cache adapter and execute a one-token smoke test."""
+"""Create ORT sessions for generated standard cache adapters and execute a smoke test."""
 
 from __future__ import annotations
 
@@ -45,8 +45,6 @@ def run_variant(path: Path, max_cache: int) -> None:
 
     cache_type = cache_inputs[0].type
     if cache_type == "tensor(bfloat16)":
-        # NumPy has no portable bfloat16 carrier in the ORT wheel. Session creation still validates
-        # the graph, types, external weights and kernels; Android's Java API supplies raw uint16.
         print(
             f"session ok {path.name}: BF16 execution skipped "
             "(Python carrier limitation)"
@@ -94,13 +92,15 @@ def main() -> None:
     if sibling_weights.exists() or sibling_weights.is_symlink():
         sibling_weights.unlink()
 
-    # ORT intentionally rejects external-data symlinks escaping the model directory. Copying the
-    # file mirrors the Android runtime layout, where graph and weights are regular sibling files.
     shutil.copyfile(args.external_data, sibling_weights)
     try:
-        paths = sorted(args.variants.glob("decoder-cache-*.onnx"))
+        paths = [
+            path
+            for path in sorted(args.variants.glob("decoder-cache-*.onnx"))
+            if "k8v8-native" not in path.name
+        ]
         if not paths:
-            raise RuntimeError("No generated decoder cache variants found")
+            raise RuntimeError("No generated standard cache variants found")
         for path in paths:
             run_variant(path, args.max_cache)
     finally:

@@ -9,7 +9,7 @@ on:
       - '.github/workflows/publish-release.yml'
 
 concurrency:
-  group: muscriptor-v0.7.1-release
+  group: muscriptor-v0.8.0-release
   cancel-in-progress: true
 
 permissions:
@@ -18,7 +18,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
@@ -35,55 +35,118 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Generate and validate cache decoder variants
+      - name: Restore MuScriptor model cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/muscriptor
+          key: muscriptor-medium-w4a32-7d1a2cc-v1
+
+      - name: Wire K8V8 source integration
+        run: python tools/apply_k8v8_source_patch.py
+
+      - name: Fetch pinned ONNX Runtime custom-op headers
+        run: bash tools/fetch_ort_headers.sh
+
+      - name: Generate and validate decoder variants
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --quiet 'onnx>=1.17,<2' 'onnxruntime>=1.20,<2' numpy
-          mkdir -p .cache/muscriptor app/src/main/assets/cache_decoders
-          curl -L --fail --retry 4 --retry-delay 2 \
-            -o .cache/muscriptor/decoder.onnx \
+          python -m pip install --quiet 'onnx>=1.17,<2' 'onnxruntime>=1.26,<2' numpy
+          mkdir -p .cache/muscriptor app/src/main/assets/cache_decoders ci
+
+          download_model() {
+            local output="$1"
+            local expected_size="$2"
+            local url="$3"
+            if [[ -f "$output" ]] && [[ "$(stat -c%s "$output")" == "$expected_size" ]]; then
+              echo "Using cached $(basename "$output")"
+              return
+            fi
+            rm -f "$output" "$output.tmp"
+            for delay in 0 10 20 40 60 90 120; do
+              if [[ "$delay" != 0 ]]; then sleep "$delay"; fi
+              if curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 \
+                  --connect-timeout 30 --max-time 1200 \
+                  -o "$output.tmp" "$url"; then
+                if [[ "$(stat -c%s "$output.tmp")" == "$expected_size" ]]; then
+                  mv "$output.tmp" "$output"
+                  return
+                fi
+              fi
+              rm -f "$output.tmp"
+            done
+            echo "Could not download $(basename "$output")" >&2
+            exit 1
+          }
+
+          download_model \
+            .cache/muscriptor/decoder.onnx \
+            79814 \
             'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx?download=true'
-          curl -L --fail --retry 4 --retry-delay 2 \
-            -o .cache/muscriptor/decoder.onnx.data \
+          download_model \
+            .cache/muscriptor/decoder.onnx.data \
+            217354240 \
             'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx.data?download=true'
+
           python tools/generate_cache_variants.py \
             --decoder .cache/muscriptor/decoder.onnx \
             --output app/src/main/assets/cache_decoders
           python tools/generate_native_gqa_cache.py \
             --decoder .cache/muscriptor/decoder.onnx \
             --output app/src/main/assets/cache_decoders
+          python tools/generate_k8v8_cache.py \
+            --decoder .cache/muscriptor/decoder.onnx \
+            --output app/src/main/assets/cache_decoders
+
+          g++ -std=c++20 -O3 -fPIC -shared -pthread \
+            -I app/src/main/cpp/ort_headers \
+            -I "$JAVA_HOME/include" \
+            -I "$JAVA_HOME/include/linux" \
+            app/src/main/cpp/k8v8_attention.cc \
+            -o ci/libmuscriptor_k8v8_host.so
+
           python tools/smoke_test_cache_variants.py \
             --variants app/src/main/assets/cache_decoders \
             --external-data .cache/muscriptor/decoder.onnx.data \
             --max-cache 512
+          python tools/validate_k8v8.py \
+            --fp16 app/src/main/assets/cache_decoders/decoder-cache-fp16-native-gqa.onnx \
+            --k8v8 app/src/main/assets/cache_decoders/decoder-cache-k8v8-native.onnx \
+            --external-data .cache/muscriptor/decoder.onnx.data \
+            --custom-library ci/libmuscriptor_k8v8_host.so \
+            --max-cache 768 \
+            --steps 4 | tee ci/k8v8-validation.txt
 
       - name: Build signed APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 
       - name: Prepare release asset
-        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.7.1.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk MuScriptor-Mobile-v0.8.0.apk
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.7.1 --cleanup-tag --yes || true
-          gh release create v0.7.1 \
-            MuScriptor-Mobile-v0.7.1.apk \
+          gh release delete v0.8.0 --cleanup-tag --yes || true
+          gh release create v0.8.0 \
+            MuScriptor-Mobile-v0.8.0.apk \
             --target "$GITHUB_SHA" \
-            --title "MuScriptor Mobile v0.7.1" \
-            --notes "Live-preview and viewer patch. Content-provider audio is now copied to a private seekable playback file on a separate thread while inference starts, with the original MIME type passed to ExoPlayer, preventing the preview from remaining stuck on Preparing original audio player under heavy CPU/NNAPI load. The MIDI scheduler drains due events under one lock and preview UI callbacks are deduplicated. The piano roll now uses the app's actual surface, outline, text, and orange accent colors instead of a separate blue-black palette. Rendering uses sharp non-antialiased note rectangles, clips note drawing to the plot, caps inference-event redraws at 20 fps, and drains large event bursts in bounded batches. Includes the native fused FP16 GQA cache path from v0.7.0 and keeps the persistent v0.6+ sideload signature."
+            --title "MuScriptor Mobile v0.8.0" \
+            --notes "Experimental native fused K8/V8 KV-cache update. The 501-position audio prefill remains on ONNX Runtime's optimized FP16 GroupQueryAttention path and is quantized once. Incremental decoding then stores both keys and values as signed INT8 with one FP32 scale per head and position. The custom attention operator reads K/V directly, quantizes only the newly appended position, uses runtime-dispatched ARM SDOT on supported devices such as Dimensity 9400, and uses NEON for value accumulation; there is no full-cache conversion per token. Host validation produced identical top-1 tokens on all four checked steps and logit cosine similarity from 0.9985 to 0.9999. At 192 MiB selected budget, K8/V8 reaches the model's 2504-position cap while using about 124.7 MiB for persistent K/V plus scales; an additional FP16 prefill cache of up to 144 MiB is retained for dense overlap tie prompts. K8/V8 is CPU-fused for the autoregressive attention path; the conditioner and FP16 prefill may still use the selected CPU/NNAPI backend. Includes the v0.7.1 live-preview and themed viewer fixes and the persistent v0.6+ sideload signature."
 
-      - name: Persist release link
+      - name: Persist release link and generated source note
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p ci
-          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.7.1' > ci/release-url.txt
+          echo 'https://github.com/${{ github.repository }}/releases/tag/v0.8.0' > ci/release-url.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add ci/release-url.txt
-          git commit -m "docs: record v0.7.1 release URL" || exit 0
+          git add \
+            app/src/main/java/dev/cardrhyme/muscriptormobile/MainActivity.kt \
+            app/src/main/java/dev/cardrhyme/muscriptormobile/MuScriptorEngine.kt \
+            ci/k8v8-validation.txt \
+            ci/release-url.txt
+          git commit -m "docs: record v0.8.0 K8V8 release" || exit 0
           git pull --rebase origin main
           git push origin HEAD:main

@@ -21,13 +21,17 @@ on:
       - 'settings.gradle.kts'
       - '.github/workflows/android.yml'
 
+concurrency:
+  group: muscriptor-native-build
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
@@ -44,18 +48,60 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Restore MuScriptor model cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/muscriptor
+          key: muscriptor-medium-w4a32-7d1a2cc-v1
+
+      - name: Wire K8V8 source integration
+        run: python tools/apply_k8v8_source_patch.py
+
+      - name: Fetch pinned ONNX Runtime custom-op headers
+        run: bash tools/fetch_ort_headers.sh
+
       - name: Generate, test, and benchmark cache decoders
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --quiet 'onnx>=1.17,<2' 'onnxruntime>=1.20,<2' numpy
+          python -m pip install --quiet 'onnx>=1.17,<2' 'onnxruntime>=1.26,<2' numpy
           mkdir -p .cache/muscriptor app/src/main/assets/cache_decoders ci
-          curl -L --fail --retry 4 --retry-delay 2 \
-            -o .cache/muscriptor/decoder.onnx \
+
+          download_model() {
+            local output="$1"
+            local expected_size="$2"
+            local url="$3"
+            if [[ -f "$output" ]] && [[ "$(stat -c%s "$output")" == "$expected_size" ]]; then
+              echo "Using cached $(basename "$output")"
+              return
+            fi
+            rm -f "$output" "$output.tmp"
+            for delay in 0 10 20 40 60 90 120; do
+              if [[ "$delay" != 0 ]]; then sleep "$delay"; fi
+              if curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 \
+                  --connect-timeout 30 --max-time 1200 \
+                  -o "$output.tmp" "$url"; then
+                if [[ "$(stat -c%s "$output.tmp")" == "$expected_size" ]]; then
+                  mv "$output.tmp" "$output"
+                  return
+                fi
+                echo "Downloaded size mismatch for $(basename "$output")" >&2
+              fi
+              rm -f "$output.tmp"
+            done
+            echo "Could not download $(basename "$output") after extended backoff" >&2
+            exit 1
+          }
+
+          download_model \
+            .cache/muscriptor/decoder.onnx \
+            79814 \
             'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx?download=true'
-          curl -L --fail --retry 4 --retry-delay 2 \
-            -o .cache/muscriptor/decoder.onnx.data \
+          download_model \
+            .cache/muscriptor/decoder.onnx.data \
+            217354240 \
             'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx.data?download=true'
+
           python tools/inspect_decoder_graph.py --decoder .cache/muscriptor/decoder.onnx > ci/decoder-graph.txt
           python tools/generate_cache_variants.py \
             --decoder .cache/muscriptor/decoder.onnx \
@@ -63,17 +109,35 @@ jobs:
           python tools/generate_native_gqa_cache.py \
             --decoder .cache/muscriptor/decoder.onnx \
             --output app/src/main/assets/cache_decoders
+          python tools/generate_k8v8_cache.py \
+            --decoder .cache/muscriptor/decoder.onnx \
+            --output app/src/main/assets/cache_decoders
+
+          g++ -std=c++20 -O3 -fPIC -shared -pthread \
+            -I app/src/main/cpp/ort_headers \
+            -I "$JAVA_HOME/include" \
+            -I "$JAVA_HOME/include/linux" \
+            app/src/main/cpp/k8v8_attention.cc \
+            -o ci/libmuscriptor_k8v8_host.so
+
           python tools/smoke_test_cache_variants.py \
             --variants app/src/main/assets/cache_decoders \
             --external-data .cache/muscriptor/decoder.onnx.data \
             --max-cache 512
+          python tools/validate_k8v8.py \
+            --fp16 app/src/main/assets/cache_decoders/decoder-cache-fp16-native-gqa.onnx \
+            --k8v8 app/src/main/assets/cache_decoders/decoder-cache-k8v8-native.onnx \
+            --external-data .cache/muscriptor/decoder.onnx.data \
+            --custom-library ci/libmuscriptor_k8v8_host.so \
+            --max-cache 768 \
+            --steps 4 | tee ci/k8v8-validation.txt
           python tools/benchmark_gqa_cache.py \
             --decoder .cache/muscriptor/decoder.onnx \
             --variants app/src/main/assets/cache_decoders \
             --external-data .cache/muscriptor/decoder.onnx.data \
             --max-cache 768 \
             --steps 10 | tee ci/cache-benchmark.txt
-          ls -lh app/src/main/assets/cache_decoders
+          ls -lh app/src/main/assets/cache_decoders ci/libmuscriptor_k8v8_host.so
 
       - name: Build and test
         id: build
@@ -89,7 +153,7 @@ jobs:
             echo "commit=${GITHUB_SHA}"
             echo "generated_at=$(date -u +%FT%TZ)"
             echo
-            tail -n 600 build.log
+            tail -n 700 build.log
           } > ci/android-build-report.txt
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
@@ -102,15 +166,23 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Persist build report
+      - name: Persist generated integration and reports
         if: always() && github.event_name == 'push'
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add ci/android-build-report.txt ci/decoder-graph.txt ci/cache-benchmark.txt
-          git commit -m "ci: update native-cache benchmark and Android report" || exit 0
-          git push
+          git add \
+            app/src/main/java/dev/cardrhyme/muscriptormobile/MuScriptorEngine.kt \
+            app/src/main/java/dev/cardrhyme/muscriptormobile/MainActivity.kt \
+            ci/android-build-report.txt \
+            ci/decoder-graph.txt \
+            ci/cache-benchmark.txt \
+            ci/k8v8-validation.txt
+          git commit -m "ci: persist K8V8 integration and validation reports" || exit 0
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin HEAD:"${GITHUB_REF_NAME}"
 
       - name: Fail when build failed
         if: steps.build.outputs.exit_code != '0'

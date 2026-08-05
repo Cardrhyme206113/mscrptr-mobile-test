@@ -12,6 +12,7 @@ enum class CachePrecision(
     val storage: Storage,
     val qualityNote: String,
     val usesFullCacheBoundaryConversion: Boolean,
+    private val extraBytesPerPosition: Long = 0,
 ) {
     FP32(
         displayName = "FP32 · exact / baseline",
@@ -92,6 +93,18 @@ enum class CachePrecision(
         storage = Storage.FP16,
         qualityNote = "Legacy half-size cache that converts the complete cache around attention.",
         usesFullCacheBoundaryConversion = true,
+    ),
+    K8V8_NATIVE(
+        displayName = "K8/V8 native fused · experimental",
+        shortName = "K8/V8 native",
+        bytesNumerator = 1,
+        bytesDenominator = 1,
+        assetFileName = "decoder-cache-k8v8-native.onnx",
+        storage = Storage.K8V8,
+        qualityNote = "Fused INT8 attention reads K/V directly; per-head/per-position FP32 scales are included in the budget.",
+        usesFullCacheBoundaryConversion = false,
+        // 24 layers × K/V × 16 heads × one FP32 scale.
+        extraBytesPerPosition = 3_072L,
     );
 
     enum class Storage {
@@ -100,13 +113,14 @@ enum class CachePrecision(
         BF16,
         INT8,
         PACKED_UINT4,
+        K8V8,
     }
 
     val packedHeadDim: Int
         get() = if (storage == Storage.PACKED_UINT4) HEAD_DIM / 2 else HEAD_DIM
 
     val bytesPerPosition: Long
-        get() = ELEMENTS_PER_POSITION * bytesNumerator / bytesDenominator
+        get() = ELEMENTS_PER_POSITION * bytesNumerator / bytesDenominator + extraBytesPerPosition
 
     fun cacheLengthForBudget(memoryMiB: Int): Int {
         val budgetBytes = memoryMiB.toLong() * MIB_BYTES

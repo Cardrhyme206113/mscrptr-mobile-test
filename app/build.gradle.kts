@@ -31,11 +31,16 @@ android {
         applicationId = "dev.cardrhyme.muscriptormobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.7.1"
+        versionCode = 13
+        versionName = "0.8.0"
 
         ndk {
             abiFilters += "arm64-v8a"
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++20"
+            }
         }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -52,6 +57,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
         }
     }
 
