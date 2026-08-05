@@ -22,7 +22,7 @@ on:
       - '.github/workflows/android.yml'
 
 concurrency:
-  group: android-${{ github.ref }}
+  group: muscriptor-native-build
   cancel-in-progress: true
 
 permissions:
@@ -31,7 +31,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
@@ -48,6 +48,12 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Restore MuScriptor model cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/muscriptor
+          key: muscriptor-medium-w4a32-7d1a2cc-v1
+
       - name: Wire K8V8 source integration
         run: python tools/apply_k8v8_source_patch.py
 
@@ -60,11 +66,40 @@ jobs:
           set -euo pipefail
           python -m pip install --quiet 'onnx>=1.17,<2' 'onnxruntime>=1.26,<2' numpy
           mkdir -p .cache/muscriptor app/src/main/assets/cache_decoders ci
-          curl -L --fail --retry 4 --retry-delay 2 \
-            -o .cache/muscriptor/decoder.onnx \
+
+          download_model() {
+            local output="$1"
+            local expected_size="$2"
+            local url="$3"
+            if [[ -f "$output" ]] && [[ "$(stat -c%s "$output")" == "$expected_size" ]]; then
+              echo "Using cached $(basename "$output")"
+              return
+            fi
+            rm -f "$output" "$output.tmp"
+            for delay in 0 10 20 40 60 90 120; do
+              if [[ "$delay" != 0 ]]; then sleep "$delay"; fi
+              if curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 \
+                  --connect-timeout 30 --max-time 1200 \
+                  -o "$output.tmp" "$url"; then
+                if [[ "$(stat -c%s "$output.tmp")" == "$expected_size" ]]; then
+                  mv "$output.tmp" "$output"
+                  return
+                fi
+                echo "Downloaded size mismatch for $(basename "$output")" >&2
+              fi
+              rm -f "$output.tmp"
+            done
+            echo "Could not download $(basename "$output") after extended backoff" >&2
+            exit 1
+          }
+
+          download_model \
+            .cache/muscriptor/decoder.onnx \
+            79814 \
             'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx?download=true'
-          curl -L --fail --retry 4 --retry-delay 2 \
-            -o .cache/muscriptor/decoder.onnx.data \
+          download_model \
+            .cache/muscriptor/decoder.onnx.data \
+            217354240 \
             'https://huggingface.co/happyme531/muscriptor-medium-onnx/resolve/main/onnx/w4a32_optimized/decoder.onnx.data?download=true'
 
           python tools/inspect_decoder_graph.py --decoder .cache/muscriptor/decoder.onnx > ci/decoder-graph.txt
