@@ -19,11 +19,9 @@ target_compile_features(muscriptor_k8v8 PRIVATE cxx_std_20)
 target_compile_options(muscriptor_k8v8 PRIVATE
   -O3
   -fno-math-errno
-  -fvisibility=hidden
   -Wall
   -Wextra
   -Wno-unused-parameter)
-target_link_options(muscriptor_k8v8 PRIVATE -Wl,--exclude-libs,ALL)
 
 find_library(log_lib log)
 target_link_libraries(muscriptor_k8v8 PRIVATE ${log_lib})
