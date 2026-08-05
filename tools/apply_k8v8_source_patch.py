@@ -71,8 +71,17 @@ def patch_engine() -> None:
 
 def patch_activity() -> None:
     text = ACTIVITY.read_text()
+    original = text
+    text = text.replace(
+        "A temporary 96 MiB FP16 prefill cache is additional.",
+        "A temporary FP16 prefill cache adds up to 144 MiB for dense overlap tie prompts.",
+    )
     if "customOpLibraryPath = if (cachePrecision == CachePrecision.K8V8_NATIVE)" in text:
-        print("MainActivity.kt already patched")
+        if text != original:
+            ACTIVITY.write_text(text)
+            print("normalized MainActivity.kt K8V8 memory note")
+        else:
+            print("MainActivity.kt already patched")
         return
 
     text = replace_once(
@@ -96,7 +105,7 @@ def patch_activity() -> None:
     text = replace_once(
         text,
         """            precision.qualityNote,\n            capNote,\n        )\n""",
-        """            precision.qualityNote,\n            capNote,\n            when {\n                precision == CachePrecision.K8V8_NATIVE -> \"A temporary 96 MiB FP16 prefill cache is additional.\"\n                precision.usesFullCacheBoundaryConversion -> \"Adapter workspace is additional.\"\n                else -> \"\"\n            },\n        )\n""",
+        """            precision.qualityNote,\n            capNote,\n            when {\n                precision == CachePrecision.K8V8_NATIVE -> \"A temporary FP16 prefill cache adds up to 144 MiB for dense overlap tie prompts.\"\n                precision.usesFullCacheBoundaryConversion -> \"Adapter workspace is additional.\"\n                else -> \"\"\n            },\n        )\n""",
         "cache summary runtime note",
     )
     ACTIVITY.write_text(text)
