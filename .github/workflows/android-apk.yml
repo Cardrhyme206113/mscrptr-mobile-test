@@ -55,7 +55,13 @@ jobs:
           VULKAN_HEADERS="$RUNNER_TEMP/android-vulkan-headers"
           mkdir -p "$VULKAN_HEADERS/vulkan"
           cp -a /usr/include/vulkan/. "$VULKAN_HEADERS/vulkan/"
+          # ggml-vulkan also directly includes spirv/unified1/spirv.hpp.
+          cp -a /usr/include/spirv "$VULKAN_HEADERS/spirv"
+          if [ -d /usr/include/vk_video ]; then
+            cp -a /usr/include/vk_video "$VULKAN_HEADERS/vk_video"
+          fi
           test -f "$VULKAN_HEADERS/vulkan/vulkan.hpp" || { echo "Missing Vulkan-Hpp: vulkan.hpp"; exit 1; }
+          test -f "$VULKAN_HEADERS/spirv/unified1/spirv.hpp" || { echo "Missing SPIR-V C++ headers"; exit 1; }
           COMMON=(
             -G Ninja
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
