@@ -25,8 +25,10 @@ jobs:
           sudo apt-get install -y ninja-build glslc libvulkan-dev
           python3 -m pip install --user 'cmake==3.31.6' --break-system-packages
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018'
+          SDKMANAGER="$(find "${ANDROID_HOME}/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -n1)"
+          test -x "$SDKMANAGER" || { echo "sdkmanager unavailable"; exit 1; }
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018'
       - name: Get pinned native MuScriptor source
         shell: bash
         run: |
