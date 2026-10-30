@@ -1,55 +1,41 @@
-# MuScriptor Mobile
+# MuScriptor Android — SVG front end + native inference
 
-Experimental Android ARM64 app for running the unofficial INT4 ONNX conversion of MuScriptor Medium fully on-device.
+An Android WebView application using the full-width, full MIDI 0–127 SVG piano-roll UI from this conversation. The view is offline, uses Web Audio for MIDI playback, and renders note updates sent by an Android JNI bridge backed by `DamRsn/muscriptor.cpp` (GGUF, FP16 and Vulkan).
 
-## Current features
+## Build an APK with GitHub Actions
 
-- Anonymous first-run model download from `happyme531/muscriptor-medium-onnx` (no Hugging Face token or account required)
-- SHA-256 verification and resumable downloads
-- Android audio picker and MediaCodec decoding for common phone audio formats
-- 16 kHz mono preprocessing and MuScriptor-compatible 501×512 log-mel frontend
-- ONNX Runtime CPU inference with fused GQA and shared pinned KV-cache buffers
-- Five-second chunking with cross-chunk tie prelude forcing
-- Token-by-token note streaming into a live scrolling piano roll
-- Standard MIDI file export
-- ARM64-only APK, targeted at the Xiaomi 14T Pro / Dimensity 9300+ class of devices
+1. This clean project is on the `vulkan-small-clean` branch; the old ONNX branch is not modified.
+2. Open **Actions → Android APK**, select the `vulkan-small-clean` branch, and run the workflow (pushes on this branch also run it).
+3. Download the `MuScriptor-Android-APK` workflow artifact and extract `app-debug.apk`.
+4. Install that APK on an ARM64 Android device. Allow installation from that source if prompted.
 
-## Model footprint
+The workflow downloads the Android NDK and builds the native backend, then assembles a debug-signed APK. **The first native Vulkan build can take several minutes or more; it is not guaranteed to finish under one minute.** This Android/Vulkan integration has *not* been hardware-tested yet. If the build fails, use the workflow logs to identify the compiler/SDK issue. APK must be built by CI/Android Studio; this source ZIP is not itself installable.
 
-The downloaded model is 223,657,166 bytes (213.30 MiB). The FP32 KV cache is the larger runtime allocation:
+### Loading a model
 
-- Low memory: 1024 positions, about 192 MiB
-- Balanced: 1536 positions, about 288 MiB
-- Full: 2504 positions, about 469.5 MiB
+Model weights are not bundled. Download `v1/muscriptor-small-f16.gguf` from [DamRsn/muscriptor-gguf](https://huggingface.co/DamRsn/muscriptor-gguf), open the APK, tap **Settings → Model → Choose**, and select the GGUF through Android's file picker. The app copies the model into its private storage and reuses it on subsequent launches. Select an MP3 or WAV and tap **Transcribe**. Notes arrive from the native model after each 5-second chunk, and final output can be saved using Android's document picker.
 
-The app downloads these public files directly:
+### Settings
 
-- `conditioner.onnx`
-- `decoder.onnx`
-- `decoder.onnx.data`
+- **Boundary repair** (experimental): runs a *second transcription* with 2.5 seconds of initial silence to shift the 5-second boundaries, and uses notes from the shifted pass close to the original boundaries. This roughly doubles inference cost and may change accuracy. Not a proven fix.
+- **Prelude forcing**: the C++ model's built-in note-continuity option.
+- **Piano only**: true `InstrumentGroup::AcousticPiano` conditioning.
+- **KV cache**: internal, automatic.
+- **Beam search**: not exposed, because the C++ implementation uses greedy decoding. The HTML demo's fake beam option is hidden in the APK.
 
-`decoder.onnx.data` must remain beside `decoder.onnx`.
+### Important limitations
 
-## Build
+- Streaming emits notes **per processed 5-second chunk**, with notes possibly delayed by one chunk, not instantaneous note-by-note inference. This comes from the C++ model API.
+- MIDI output exports pitch, onset and note duration at fixed velocity 87. The model **does not predict velocities**. The current simple MIDI writer flattens different instruments to one piano track; program assignments are not preserved yet.
+- The front end remains independently usable without model weights as a MIDI stress test, player and exporter.
+- The device, build workflow, and accuracy of Vulkan versus CPU have not been verified on a physical Mali-G720 device.
+- The native C++ package can make the APK substantially larger than the HTML prototype; measure the actual artifact.
+- Inference accepts MP3/WAV through Android MediaExtractor/MediaCodec and windowed-sinc downsampling to 16 kHz. This is native decoding, not an Internet service.
 
-GitHub Actions builds a debug APK on every relevant push. Open **Actions → Build Android APK**, select the latest successful run, and download the `muscriptor-mobile-debug-apk` artifact.
+## Local build
 
-Local build with Java 17 and Gradle 8.11.1:
+Requirements: Android SDK API 35, NDK r27c, CMake ≥3.24, Ninja, a Vulkan shader compiler (`glslc`), Gradle 8.9, JDK 17.
 
-```bash
-gradle :app:assembleDebug
-```
+The workflow `.github/workflows/android-apk.yml` provides the exact native CMake and Gradle commands. Copy the compiled `libmuscriptor_jni.so` into `app/src/main/jniLibs/arm64-v8a/` before running `gradle :app:assembleDebug`.
 
-The APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
-
-## Important meaning of “streaming”
-
-The piano roll and note count update while autoregressive inference is still running. This does not promise that inference itself is faster than wall-clock audio duration; actual speed must be measured on the target phone.
-
-## Status / limitations
-
-This is an early device test build. CPU inference is implemented first because the model uses custom/contrib ONNX Runtime ops (`MatMulNBits`, `GroupQueryAttention`, and `SkipLayerNormalization`) that are not expected to map cleanly to Android NNAPI. The app currently uses greedy decoding, fixed 120 BPM MIDI timing, and no beat-grid detection. Dense chunks can hit a reduced cache profile's token limit; the full 2504-position profile matches the exported model's recommended cache.
-
-## License
-
-The derivative model weights are CC BY-NC 4.0 and are not for commercial use. The user must have the necessary rights to any audio supplied to the model. See `docs/model-reference/NOTICE.md` and the upstream model card material in `docs/model-reference`.
+External source: https://github.com/DamRsn/muscriptor.cpp (GGUF native port). See its license and linked `ggml` notices before redistribution.

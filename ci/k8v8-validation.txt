@@ -1,5 +1,0 @@
-step 1: fp16=1057, k8v8=1057, cosine=0.998522, host_ms=18.58/20.09
-step 2: fp16=1134, k8v8=1134, cosine=0.999688, host_ms=17.21/17.21
-step 3: fp16=1, k8v8=1, cosine=0.999921, host_ms=17.75/15.17
-step 4: fp16=1045, k8v8=1045, cosine=0.999128, host_ms=17.99/14.80
-summary: top1_agreement=4/4, minimum_cosine=0.998522, host_allocating_output_ms=17.87/16.19
