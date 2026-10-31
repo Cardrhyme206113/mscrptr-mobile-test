@@ -21,7 +21,7 @@ jobs:
       working-directory: pocket-native
       run: |
         base64 -d ci/pocket-v2-source.b64 | tar -xz
-        test -f app/src/main/java/com/muscript/pocket/MainActivity.java
+        python3 ci/fix_startup.py
         test -f app/src/main/assets/index.html
     - name: Assemble debug APK
       working-directory: pocket-native
@@ -33,18 +33,7 @@ jobs:
         arch: x86_64
         profile: pixel_6
         disable-animations: true
-        script: |
-          adb install -r pocket-native/app/build/outputs/apk/debug/app-debug.apk
-          adb logcat -c
-          adb shell am start -W -n com.muscript.pocket/.MainActivity
-          sleep 10
-          adb logcat -d -v time > startup-logcat.txt
-          if ! adb shell pidof com.muscript.pocket; then
-             echo 'APP CRASHED DURING LAUNCH'
-             grep -A 35 -B 12 -E 'FATAL EXCEPTION|Process: com.muscript.pocket|AndroidRuntime' startup-logcat.txt | tail -180 || true
-             exit 1
-          fi
-          echo 'APP REMAINED RUNNING FOR 10 SECONDS'
+        script: bash pocket-native/ci/emulator_smoke.sh
     - name: Upload emulator crash logs
       if: always()
       uses: actions/upload-artifact@v4
