@@ -91,8 +91,8 @@ final class OnnxTranscriber {
         }
     }
     synchronized void close(){
-        if(residentSession!=null){residentSession.close();residentSession=null;}
-        if(residentOptions!=null){residentOptions.close();residentOptions=null;}
+        if(residentSession!=null){try{residentSession.close();}catch(Exception ignored){}residentSession=null;}
+        if(residentOptions!=null){try{residentOptions.close();}catch(Exception ignored){}residentOptions=null;}
         residentThreads=-1;
     }
     Result run(AudioFrontend.AudioData audio, Settings s) throws Exception {
