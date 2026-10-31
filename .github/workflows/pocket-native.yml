@@ -1,4 +1,4 @@
-name: Build MuScript Pocket APK
+name: Build and launch-test MuScript Pocket APK
 on:
   workflow_dispatch:
   push:
@@ -17,15 +17,44 @@ jobs:
     - uses: gradle/actions/setup-gradle@v4
       with:
         gradle-version: '8.13'
-    - name: Apply verified MuScript Pocket v2 source update
+    - name: Apply MuScript Pocket v2 sources
       working-directory: pocket-native
       run: |
         base64 -d ci/pocket-v2-source.b64 | tar -xz
         test -f app/src/main/java/com/muscript/pocket/MainActivity.java
         test -f app/src/main/assets/index.html
-    - run: gradle --no-daemon :app:assembleDebug --stacktrace
+    - name: Assemble debug APK
       working-directory: pocket-native
-    - uses: actions/upload-artifact@v4
+      run: gradle --no-daemon :app:assembleDebug --stacktrace
+    - name: Launch Android emulator and verify startup
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: 35
+        arch: x86_64
+        profile: pixel_6
+        disable-animations: true
+        script: |
+          adb install -r pocket-native/app/build/outputs/apk/debug/app-debug.apk
+          adb logcat -c
+          adb shell am start -W -n com.muscript.pocket/.MainActivity
+          sleep 10
+          adb logcat -d -v time > startup-logcat.txt
+          if ! adb shell pidof com.muscript.pocket; then
+             echo 'APP CRASHED DURING LAUNCH'
+             grep -A 35 -B 12 -E 'FATAL EXCEPTION|Process: com.muscript.pocket|AndroidRuntime' startup-logcat.txt | tail -180 || true
+             exit 1
+          fi
+          echo 'APP REMAINED RUNNING FOR 10 SECONDS'
+    - name: Upload emulator crash logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: pocket-startup-logcat
+        path: startup-logcat.txt
+        if-no-files-found: ignore
+    - name: Upload APK
+      if: always()
+      uses: actions/upload-artifact@v4
       with:
         name: muscript-pocket-debug-apk
         path: pocket-native/app/build/outputs/apk/debug/app-debug.apk
